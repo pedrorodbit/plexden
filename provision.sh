@@ -11,18 +11,18 @@
 set -u
 
 # Parametrizavel por variaveis de ambiente (defaults sensatos). Ex.:
-#   sudo PLEXCTL_HOME=/srv/plex PLEXCTL_USER=media ./provision.sh
-# Precedencia: variavel de ambiente > /etc/plexctl.conf (instalacao ja feita) >
+#   sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media ./provision.sh
+# Precedencia: variavel de ambiente > /etc/plexden.conf (instalacao ja feita) >
 # default. Assim, re-rodar num servidor ja configurado preserva os valores dele.
-_ENV_HOME="${PLEXCTL_HOME:-}"; _ENV_USER="${PLEXCTL_USER:-}"
-[ -r /etc/plexctl.conf ] && . /etc/plexctl.conf
-PERSIST="${_ENV_HOME:-${PLEXCTL_HOME:-/srv/plexctl}}"
-PLEX_USER="${_ENV_USER:-${PLEXCTL_USER:-plex}}"
+_ENV_HOME="${PLEXDEN_HOME:-}"; _ENV_USER="${PLEXDEN_USER:-}"
+[ -r /etc/plexden.conf ] && . /etc/plexden.conf
+PERSIST="${_ENV_HOME:-${PLEXDEN_HOME:-/srv/plexden}}"
+PLEX_USER="${_ENV_USER:-${PLEXDEN_USER:-plex}}"
 # UUID do tunnel: se vazio, e auto-detectado a partir de cloudflared/*.json.
 TUNNEL_UUID="${CF_TUNNEL_UUID:-}"
 
 # --check: dry-run. Detecta o gerenciador, resolve a lista de pacotes e a
-# estrategia por familia, valida a sintaxe do plexctl e sai — sem instalar nada
+# estrategia por familia, valida a sintaxe do plexden e sai — sem instalar nada
 # nem mutar o sistema. E' o que o CI roda em cada distro.
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
@@ -44,7 +44,7 @@ fi
 
 # ------------------------------------------------- gerenciador de pacotes ---
 # Camada fina sobre o gerenciador da distro. So o bootstrap (este script) e o
-# 'plexctl update' dependem disto; o resto do plexctl e' agnostico.
+# 'plexden update' dependem disto; o resto do plexden e' agnostico.
 PKG=""
 detect_pkg() {
     for m in apt-get dnf yum pacman zypper; do
@@ -102,7 +102,7 @@ case "$PKG" in
     dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3" ;;
 esac
 
-# Dry-run: reporta o plano e valida o plexctl, sem tocar no sistema.
+# Dry-run: reporta o plano e valida o plexden, sem tocar no sistema.
 if [ "$CHECK" = 1 ]; then
     log "== MODO --check (dry-run) — nada sera instalado =="
     log "  pacotes base: $base"
@@ -114,15 +114,15 @@ if [ "$CHECK" = 1 ]; then
     log "  cloudflared: binario estatico ($(uname -m))"
     sdir=$(cd "$(dirname "$0")" && pwd)
     P=""
-    [ -f "$sdir/scripts/plexctl" ] && P="$sdir/scripts/plexctl"
-    [ -z "$P" ] && [ -f "$sdir/plexctl" ] && P="$sdir/plexctl"
+    [ -f "$sdir/scripts/plexden" ] && P="$sdir/scripts/plexden"
+    [ -z "$P" ] && [ -f "$sdir/plexden" ] && P="$sdir/plexden"
     if [ -n "$P" ] && command -v python3 >/dev/null 2>&1; then
-        python3 - "$P" <<'PY' && log "  plexctl: sintaxe Python OK"
+        python3 - "$P" <<'PY' && log "  plexden: sintaxe Python OK"
 import ast, sys
 ast.parse(open(sys.argv[1]).read())
 PY
     else
-        log "  (plexctl ou python3 ausente — pulei a checagem de sintaxe)"
+        log "  (plexden ou python3 ausente — pulei a checagem de sintaxe)"
     fi
     exit 0
 fi
@@ -205,11 +205,11 @@ log "  ok"
 # ------------------------------------------------------------------ plex ----
 log "== Plex =="
 # A logica de ambiente do Plex (variaveis + exec do binario) vive agora em
-# 'plexctl plex-exec'. ~/bin/plex-start e so um stub que chama o plexctl.
+# 'plexden plex-exec'. ~/bin/plex-start e so um stub que chama o plexden.
 mkdir -p /home/"$PLEX_USER"/bin
 cat > /home/"$PLEX_USER"/bin/plex-start <<'EOF'
 #!/bin/sh
-exec /usr/local/bin/plexctl plex-exec
+exec /usr/local/bin/plexden plex-exec
 EOF
 chmod +x /home/"$PLEX_USER"/bin/plex-start
 chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/bin
@@ -220,8 +220,8 @@ else
     log "  config nova: sera preciso claimar em https://plex.tv/claim (ver README)"
 fi
 
-# init script (stub SysV -> plexctl _init). O pacote do Plex o remove ao
-# atualizar; o 'plexctl update' e este provision o recriam.
+# init script (stub SysV -> plexden _init). O pacote do Plex o remove ao
+# atualizar; o 'plexden update' e este provision o recriam.
 cat > /etc/init.d/plexmediaserver <<'EOF'
 #!/bin/sh
 ### BEGIN INIT INFO
@@ -232,7 +232,7 @@ cat > /etc/init.d/plexmediaserver <<'EOF'
 # Default-Stop:      0 1 6
 # Short-Description: Plex Media Server
 ### END INIT INFO
-exec /usr/local/bin/plexctl _init "$@"
+exec /usr/local/bin/plexden _init "$@"
 EOF
 chmod 755 /etc/init.d/plexmediaserver
 log "  init stub instalado"
@@ -243,11 +243,11 @@ QBCONF=/home/"$PLEX_USER"/.config/qBittorrent/qBittorrent.conf
 if [ ! -f "$QBCONF" ]; then
     mkdir -p "$(dirname "$QBCONF")"
     # qBittorrent 4.5 le Session\DefaultSavePath (nao Downloads\SavePath, que e
-    # legado e fica ignorado). AutoRun chama o 'plexctl postprocess' ao concluir.
+    # legado e fica ignorado). AutoRun chama o 'plexden postprocess' ao concluir.
     cat > "$QBCONF" <<EOF
 [AutoRun]
 enabled=true
-program=/usr/local/bin/plexctl postprocess "%N" "%F"
+program=/usr/local/bin/plexden postprocess "%N" "%F"
 
 [BitTorrent]
 Session\\DefaultSavePath=$PERSIST/torrents/complete
@@ -265,7 +265,7 @@ else
     log "  config ja existe — preservada"
 fi
 
-# Alinha usuario/senha da WebUI ao credentials.env. Sem isso, 'plexctl qb' pode
+# Alinha usuario/senha da WebUI ao credentials.env. Sem isso, 'plexden qb' pode
 # nao logar numa instalacao nova: a serie 4.x usa 'adminadmin', mas a 5.x
 # (Fedora/Arch) gera uma senha aleatoria a cada boot ate uma ser definida. Faz
 # com o qB parado, para a edicao nao ser sobrescrita ao salvar a sessao.
@@ -353,25 +353,25 @@ fi
 
 # ------------------------------------------------------------ stack start ---
 log "== Scripts de operacao =="
-# Tudo unificado em 'plexctl' (Python). plex-stack-start e um stub para o
+# Tudo unificado em 'plexden' (Python). plex-stack-start e um stub para o
 # entrypoint do container.
-if [ -f "$PERSIST/scripts/plexctl" ]; then
-    cp "$PERSIST/scripts/plexctl" /usr/local/bin/plexctl
-    chmod 755 /usr/local/bin/plexctl
-    log "  plexctl instalado"
+if [ -f "$PERSIST/scripts/plexden" ]; then
+    cp "$PERSIST/scripts/plexden" /usr/local/bin/plexden
+    chmod 755 /usr/local/bin/plexden
+    log "  plexden instalado"
 else
-    log "  AVISO: $PERSIST/scripts/plexctl ausente — stack nao vai subir"
+    log "  AVISO: $PERSIST/scripts/plexden ausente — stack nao vai subir"
 fi
-# grava a config que o plexctl le em runtime (caminho e usuario da stack)
-cat > /etc/plexctl.conf <<EOF
-PLEXCTL_HOME=$PERSIST
-PLEXCTL_USER=$PLEX_USER
+# grava a config que o plexden le em runtime (caminho e usuario da stack)
+cat > /etc/plexden.conf <<EOF
+PLEXDEN_HOME=$PERSIST
+PLEXDEN_USER=$PLEX_USER
 EOF
-chmod 644 /etc/plexctl.conf
-log "  /etc/plexctl.conf gravado ($PERSIST, usuario $PLEX_USER)"
+chmod 644 /etc/plexden.conf
+log "  /etc/plexden.conf gravado ($PERSIST, usuario $PLEX_USER)"
 cat > /usr/local/bin/plex-stack-start <<'EOF'
 #!/bin/sh
-exec /usr/local/bin/plexctl services start
+exec /usr/local/bin/plexden services start
 EOF
 chmod 755 /usr/local/bin/plex-stack-start
 log "  plex-stack-start (stub)"
@@ -394,7 +394,7 @@ if [ -f "$PERSIST/credentials.env" ]; then
         log "  AVISO: QB_USER/QB_PASS ausentes no credentials.env"
     fi
 else
-    log "  AVISO: $PERSIST/credentials.env ausente — 'plexctl qb' vai pedir ~/.qbcreds"
+    log "  AVISO: $PERSIST/credentials.env ausente — 'plexden qb' vai pedir ~/.qbcreds"
 fi
 
 # ---------------------------------------------------------------- subir -----

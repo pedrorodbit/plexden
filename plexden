@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-plexctl — gerencia unificada da stack Plex + qBittorrent + Cloudflare Tunnel.
+plexden — gerencia unificada da stack Plex + qBittorrent + Cloudflare Tunnel.
 
 Substitui os 7 scripts bash antigos (plex-services, plex-stack-start,
 plex-start, plexmediaserver.init, qb-cli, qb-postprocess, update-plex) por um
 unico dispatcher com subcomandos. So depende da stdlib do Python 3 (nenhum
 pacote via pip).
 
-  plexctl services {start|stop|restart|status|watch [segs]}   (root)
-  plexctl qb {list|paths|pause|resume|setlocation} ...
-  plexctl postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
-  plexctl update                                              (root)
-  plexctl plex-exec                                           (entrypoint do Plex)
-  plexctl _init {start|stop|status|restart}                  (stub SysV)
+  plexden services {start|stop|restart|status|watch [segs]}   (root)
+  plexden qb {list|paths|pause|resume|setlocation} ...
+  plexden postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
+  plexden update                                              (root)
+  plexden plex-exec                                           (entrypoint do Plex)
+  plexden _init {start|stop|status|restart}                  (stub SysV)
 
 Pontos de integracao (caminho fixo) viram stubs de 1 linha que chamam este
 script:
-  /etc/init.d/plexmediaserver   -> plexctl _init "$@"
-  /home/pedro/bin/plex-start    -> plexctl plex-exec
-  AutoRun do qBittorrent.conf   -> plexctl postprocess "%N" "%F"
+  /etc/init.d/plexmediaserver   -> plexden _init "$@"
+  ~/bin/plex-start              -> plexden plex-exec
+  AutoRun do qBittorrent.conf   -> plexden postprocess "%N" "%F"
 """
 import http.cookiejar
 import json
@@ -35,9 +35,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 # --------------------------------------------------------------- constantes ---
-# Configuravel por /etc/plexctl.conf (KEY=VALUE) ou variaveis de ambiente, com
+# Configuravel por /etc/plexden.conf (KEY=VALUE) ou variaveis de ambiente, com
 # defaults sensatos. O provision.sh grava o .conf na instalacao.
-def _load_conf(path="/etc/plexctl.conf"):
+def _load_conf(path="/etc/plexden.conf"):
     conf = {}
     try:
         with open(path) as f:
@@ -58,8 +58,8 @@ def _cfg(key, default):
     return os.environ.get(key) or _CONF.get(key) or default
 
 
-PLEX_USER = _cfg("PLEXCTL_USER", "plex")
-PERSIST = _cfg("PLEXCTL_HOME", "/srv/plexctl")
+PLEX_USER = _cfg("PLEXDEN_USER", "plex")
+PERSIST = _cfg("PLEXDEN_HOME", "/srv/plexden")
 MOVIES = os.path.join(PERSIST, "movies")
 SERIES = os.path.join(PERSIST, "series")
 LOGDIR = os.path.join(PERSIST, "logs")
@@ -94,7 +94,7 @@ def is_root():
 
 def require_root(argv_hint=""):
     if not is_root():
-        print(f"rode como root (sudo plexctl {argv_hint})".rstrip())
+        print(f"rode como root (sudo plexden {argv_hint})".rstrip())
         sys.exit(1)
 
 
@@ -391,7 +391,7 @@ def cmd_services(args):
     if action == "watch":
         do_watch(int(args[1]) if len(args) > 1 else 60)
         return 0
-    print("Uso: plexctl services {start|stop|restart|status|watch [segundos]}")
+    print("Uso: plexden services {start|stop|restart|status|watch [segundos]}")
     return 1
 
 
@@ -415,7 +415,7 @@ def cmd_init(args):
             return 0
         print("Plex Media Server parado")
         return 3
-    print("Uso: plexctl _init {start|stop|restart|status}")
+    print("Uso: plexden _init {start|stop|restart|status}")
     return 1
 
 
@@ -560,7 +560,7 @@ def cmd_qb(args):
 
     if action == "setlocation":
         if len(args) < 2:
-            print("uso: plexctl qb setlocation <destino> [hash]")
+            print("uso: plexden qb setlocation <destino> [hash]")
             return 1
         dest = args[1]
         h = args[2] if len(args) > 2 else "|".join(
@@ -576,7 +576,7 @@ def cmd_qb(args):
         print(msg)
         return 0
 
-    print("Uso: plexctl qb {list|paths|setlocation <destino> [hash]|"
+    print("Uso: plexden qb {list|paths|setlocation <destino> [hash]|"
           "pause [busca]|resume [busca]}")
     return 1
 
@@ -667,7 +667,7 @@ def _trigger_scan(scan_dir):
 
 def cmd_postprocess(args):
     if len(args) < 2:
-        print('uso: plexctl postprocess "<nome>" "<caminho>"')
+        print('uso: plexden postprocess "<nome>" "<caminho>"')
         return 1
     name, content = args[0], args[1]
     if not os.path.exists(content):
@@ -731,7 +731,7 @@ def cmd_postprocess(args):
 
 # ============================================================ UPDATE ==========
 def ensure_init_stub():
-    """(Re)cria os stubs de integracao que apontam para o plexctl."""
+    """(Re)cria os stubs de integracao que apontam para o plexden."""
     self = os.path.abspath(sys.argv[0])
     with open(INIT_PLEX, "w") as f:
         f.write("#!/bin/sh\n"
@@ -892,14 +892,14 @@ def cmd_update(args):
 
 
 # ============================================================ DISPATCH ========
-USAGE = """plexctl — stack Plex + qBittorrent + Cloudflare
+USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
 
-  plexctl services {start|stop|restart|status|watch [segs]}   (root)
-  plexctl qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
-  plexctl postprocess "<nome>" "<caminho>"
-  plexctl update                                              (root)
-  plexctl plex-exec
-  plexctl _init {start|stop|restart|status}
+  plexden services {start|stop|restart|status|watch [segs]}   (root)
+  plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
+  plexden postprocess "<nome>" "<caminho>"
+  plexden update                                              (root)
+  plexden plex-exec
+  plexden _init {start|stop|restart|status}
 """
 
 

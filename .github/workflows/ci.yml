@@ -24,13 +24,13 @@ jobs:
           sudo apt-get install -y -qq shellcheck
           shellcheck -e SC1091 install.sh provision.sh
 
-      - name: Sintaxe do plexctl (Python)
-        run: python3 -c "import ast; ast.parse(open('plexctl').read())"
+      - name: Sintaxe do plexden (Python)
+        run: python3 -c "import ast; ast.parse(open('plexden').read())"
 
   # ------------------------------------------------------------- distros ---
   # Em cada familia de distro, roda 'provision.sh --check' (dry-run, sem
   # instalar nada) e confere que o gerenciador certo foi detectado e que o
-  # plexctl compila sob o python daquela distro.
+  # plexden compila sob o python daquela distro.
   distros:
     runs-on: ubuntu-latest
     strategy:
@@ -71,8 +71,8 @@ jobs:
           out=$(bash provision.sh --check)
           echo "$out"
           echo "$out" | grep -q "gerenciador detectado: ${{ matrix.pkg }}"
-          echo "$out" | grep -q "plexctl: sintaxe Python OK"
+          echo "$out" | grep -q "plexden: sintaxe Python OK"
 
-      - name: plexctl compila sob o python desta distro
+      - name: plexden compila sob o python desta distro
         run: |
-          python3 -c "import ast, sys; ast.parse(open('plexctl').read()); print('plexctl OK sob Python', sys.version.split()[0])"
+          python3 -c "import ast, sys; ast.parse(open('plexden').read()); print('plexden OK sob Python', sys.version.split()[0])"
