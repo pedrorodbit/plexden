@@ -11,7 +11,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Sintaxe dos scripts shell (bash -n)
         run: |
@@ -58,7 +58,7 @@ jobs:
             pacman -S  --noconfirm --needed python git
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: provision.sh --check detecta o gerenciador certo
         run: |
