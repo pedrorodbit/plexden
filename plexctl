@@ -155,6 +155,38 @@ def cf_ok():
     return pgrep_x("cloudflared")
 
 
+# O `cloudflared service install` cria uma unit do systemd (onde systemd e' o
+# init) ou um script SysV (onde nao e'). Detectamos e usamos o caminho certo.
+def _has_systemd():
+    return os.path.isdir("/run/systemd/system")
+
+
+def _cf_systemd_unit():
+    if not (_has_systemd() and shutil.which("systemctl")):
+        return False
+    return "cloudflared.service" in sh(
+        ["systemctl", "list-unit-files", "cloudflared.service"]).stdout
+
+
+def cf_start():
+    """Sobe o cloudflared pelo servico configurado. False se nao houver."""
+    if _cf_systemd_unit():
+        sh(["systemctl", "start", "cloudflared"])
+        return True
+    if os.access(INIT_CF, os.X_OK):
+        sh([INIT_CF, "start"])
+        return True
+    return False
+
+
+def cf_stop():
+    if _cf_systemd_unit():
+        sh(["systemctl", "stop", "cloudflared"])
+    elif os.access(INIT_CF, os.X_OK):
+        sh([INIT_CF, "stop"])
+    sh(["pkill", "-x", "cloudflared"])
+
+
 def _plex_running_pid():
     """PID do Plex via pidfile (se vivo) ou pgrep pelo padrao."""
     for pf in (PLEX_PIDFILE, "/tmp/plexmediaserver.pid"):
@@ -258,10 +290,8 @@ def start_cf():
     if cf_ok():
         print("  cloudflared  ja no ar")
         return True
-    if os.access(INIT_CF, os.X_OK):
-        sh([INIT_CF, "start"])
-    else:
-        print("  cloudflared  SEM init script (rode provision)")
+    if not cf_start():
+        print("  cloudflared  SEM servico (systemd/init) — rode provision")
         return False
     for i in range(1, 16):
         if cf_ok():
@@ -296,9 +326,7 @@ def do_stop():
             sh(["pkill", "-9", "-x", "qbittorrent-nox"])
             time.sleep(1)
     print("  qBittorrent  parado")
-    if os.access(INIT_CF, os.X_OK):
-        sh([INIT_CF, "stop"])
-    sh(["pkill", "-x", "cloudflared"])
+    cf_stop()
     print("  cloudflared  parado")
     return 0
 
