@@ -706,15 +706,78 @@ def ensure_init_stub():
     os.chmod(INIT_PLEX, 0o755)
 
 
+# ------------------------------------------- gerenciador de pacotes (update) --
+# Espelha a abstracao do provision.sh, mas em Python e so para o 'update'.
+def _detect_pkg():
+    for m in ("apt-get", "dnf", "yum", "pacman", "zypper"):
+        if shutil.which(m):
+            return m
+    return None
+
+
+def _pkg_family(mgr):
+    if mgr == "apt-get":
+        return "deb"
+    if mgr in ("dnf", "yum", "zypper"):
+        return "rpm"
+    if mgr == "pacman":
+        return "arch"
+    return None
+
+
+def _plex_version_installed(fam):
+    if fam == "deb":
+        return sh(["dpkg-query", "-W", "-f=${Version}",
+                   "plexmediaserver"]).stdout.strip()
+    if fam == "rpm":
+        return sh(["rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}",
+                   "plexmediaserver"]).stdout.strip()
+    return ""
+
+
+def _plex_version_file(fam, path):
+    if fam == "deb":
+        return sh(["dpkg-deb", "-f", path, "Version"]).stdout.strip()
+    if fam == "rpm":
+        return sh(["rpm", "-qp", "--qf", "%{VERSION}-%{RELEASE}",
+                   path]).stdout.strip()
+    return ""
+
+
+def _plex_install_file(mgr, fam, path):
+    if fam == "deb":
+        if sh(f"DEBIAN_FRONTEND=noninteractive dpkg -i {path}").returncode != 0:
+            sh(["apt-get", "-f", "install", "-y"])
+    elif fam == "rpm":
+        if mgr == "dnf":
+            sh(["dnf", "install", "-y", path])
+        elif mgr == "yum":
+            sh(["yum", "install", "-y", path])
+        elif mgr == "zypper":
+            sh(["zypper", "-n", "install", "--allow-unsigned-rpm", path])
+        else:
+            sh(["rpm", "-Uvh", path])
+
+
 def cmd_update(args):
     require_root("update")
     token = plex_token()
     if not token:
         print("ERRO: PlexOnlineToken nao encontrado — servidor claimado?")
         return 1
-    curver = sh(["dpkg-query", "-W", "-f=${Version}",
-                 "plexmediaserver"]).stdout.strip()
-    print(f"== Versao instalada: {curver}")
+
+    mgr = _detect_pkg()
+    fam = _pkg_family(mgr) if mgr else None
+    if fam is None:
+        print("ERRO: gerenciador de pacotes nao reconhecido para update automatico")
+        return 1
+    if fam == "arch":
+        print("No Arch o Plex vem do AUR — atualize por la:")
+        print("  yay -S plex-media-server   (ou o helper de AUR que voce usar)")
+        return 0
+
+    curver = _plex_version_installed(fam)
+    print(f"== Versao instalada: {curver}  (via {mgr})")
 
     print("== Backup do banco ==")
     backup = os.path.join(PERSIST, "config-backup-" + time.strftime("%Y%m%d-%H%M%S"))
@@ -725,44 +788,44 @@ def cmd_update(args):
         return 1
     print(f"   {backup} ({sh(['du','-sh',backup]).stdout.split()[0]})")
 
-    print("== Baixando .deb ==")
-    deb = "/tmp/plex-new.deb"
+    distro = "debian" if fam == "deb" else "redhat"
+    ext = fam
+    pkgfile = f"/tmp/plex-new.{ext}"
+    print(f"== Baixando .{ext} ==")
     url = ("https://plex.tv/downloads/latest/5?channel=16&build=linux-x86_64"
-           f"&distro=debian&X-Plex-Token={token}")
-    if sh(["curl", "-sL", "--max-time", "600", "-o", deb, url]).returncode != 0:
+           f"&distro={distro}&X-Plex-Token={token}")
+    if sh(["curl", "-sL", "--max-time", "600", "-o", pkgfile, url]).returncode != 0:
         print("ERRO: download falhou")
         return 1
-    newver = sh(["dpkg-deb", "-f", deb, "Version"]).stdout.strip()
+    newver = _plex_version_file(fam, pkgfile)
     if not newver:
         print("ERRO: pacote invalido")
-        _rm(deb)
+        _rm(pkgfile)
         return 1
-    print(f"   baixado: {newver} ({sh(['du','-h',deb]).stdout.split()[0]})")
+    print(f"   baixado: {newver} ({sh(['du','-h',pkgfile]).stdout.split()[0]})")
 
     if newver == curver:
         print("== Ja esta na versao mais recente. Nada a fazer.")
-        _rm(deb)
+        _rm(pkgfile)
         shutil.rmtree(backup, ignore_errors=True)
         return 0
 
     print("== Parando Plex ==")
     plex_process_stop()
     print(f"== Instalando {newver} ==")
-    if sh(f"DEBIAN_FRONTEND=noninteractive dpkg -i {deb}").returncode != 0:
-        sh(["apt-get", "-f", "install", "-y"])
+    _plex_install_file(mgr, fam, pkgfile)
     print("== Restaurando stub do init (o pacote o remove) ==")
     ensure_init_stub()
     print("== Iniciando ==")
     plex_process_start()
 
     print("== Verificacao ==")
-    print("   versao:", sh(["dpkg-query", "-W", "-f=${Version}",
-                            "plexmediaserver"]).stdout.strip())
+    print("   versao:", _plex_version_installed(fam))
     ident = http_get(f"{PLEX_URL}/identity", timeout=10)
     cm = re.search(r'claimed="[01]"', ident)
     if cm:
         print("  ", cm.group(0))
-    _rm(deb)
+    _rm(pkgfile)
     print(f"\nPronto. Backup do banco anterior: {backup}")
     return 0
 
