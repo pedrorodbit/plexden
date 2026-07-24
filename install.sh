@@ -25,7 +25,23 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl; }
+# O install.sh so precisa de curl (o provision.sh depois cuida do resto, ja de
+# forma multi-distro). Normalmente o curl ja existe — foi ele que baixou este
+# script. Mas se alguem rodar apos baixar por outro meio, tentamos instalar pelo
+# gerenciador da distro, sem assumir apt.
+ensure_curl() {
+    command -v curl >/dev/null 2>&1 && return 0
+    echo "== curl ausente — tentando instalar =="
+    if   command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq curl
+    elif command -v dnf     >/dev/null 2>&1; then dnf install -y -q curl
+    elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl
+    elif command -v pacman  >/dev/null 2>&1; then pacman -Sy --noconfirm --needed curl
+    elif command -v zypper  >/dev/null 2>&1; then zypper -n install curl
+    else echo "instale 'curl' manualmente e rode de novo." >&2; exit 1
+    fi
+    command -v curl >/dev/null 2>&1 || { echo "falha ao instalar curl." >&2; exit 1; }
+}
+ensure_curl
 
 echo "== Baixando plexctl + provision.sh de ${REPO}@${BRANCH} =="
 mkdir -p "${PLEXCTL_HOME}/scripts"
