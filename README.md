@@ -85,7 +85,7 @@ O que você faz depois de instalar:
    ```bash
    cp $PLEXCTL_HOME/credentials.env.example $PLEXCTL_HOME/credentials.env
    chmod 600 $PLEXCTL_HOME/credentials.env   # edite QB_USER / QB_PASS
-   sudo $PLEXCTL_HOME/provision.sh           # regenera o ~/.qbcreds
+   sudo $PLEXCTL_HOME/provision.sh           # regenera ~/.qbcreds e a senha da WebUI
    ```
 2. **Plex** — um servidor recém-instalado nasce "não reivindicado". Pegue um token
    em [plex.tv/claim](https://plex.tv/claim) (ele expira em 4 minutos) e:

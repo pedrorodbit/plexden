@@ -260,9 +260,66 @@ WebUI\\Port=8081
 WebUI\\Username=admin
 EOF
     chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/.config
-    log "  config criada (login inicial: admin / adminadmin na 4.5.x)"
+    log "  config criada"
 else
     log "  config ja existe — preservada"
+fi
+
+# Alinha usuario/senha da WebUI ao credentials.env. Sem isso, 'plexctl qb' pode
+# nao logar numa instalacao nova: a serie 4.x usa 'adminadmin', mas a 5.x
+# (Fedora/Arch) gera uma senha aleatoria a cada boot ate uma ser definida. Faz
+# com o qB parado, para a edicao nao ser sobrescrita ao salvar a sessao.
+if [ -f "$PERSIST/credentials.env" ]; then
+    QB_U=$(grep -E '^QB_USER=' "$PERSIST/credentials.env" | cut -d= -f2-)
+    QB_P=$(grep -E '^QB_PASS=' "$PERSIST/credentials.env" | cut -d= -f2-)
+    if [ -n "${QB_U:-}" ] && [ -n "${QB_P:-}" ]; then
+        pkill -x qbittorrent-nox 2>/dev/null && sleep 2
+        python3 - "$QBCONF" "$QB_U" "$QB_P" <<'PY'
+import sys, os, hashlib, base64
+conf, user, pw = sys.argv[1], sys.argv[2], sys.argv[3]
+salt = os.urandom(16)
+key = hashlib.pbkdf2_hmac('sha512', pw.encode(), salt, 100000, 64)
+pbkdf2 = '"@ByteArray(%s:%s)"' % (
+    base64.b64encode(salt).decode(), base64.b64encode(key).decode())
+user_line = 'WebUI\\Username=' + user
+pass_line = 'WebUI\\Password_PBKDF2=' + pbkdf2
+try:
+    lines = open(conf, encoding='utf-8').read().splitlines()
+except OSError:
+    lines = []
+result, cur = [], None
+done_user = done_pass = False
+
+def flush_prefs():
+    global done_user, done_pass
+    if not done_user:
+        result.append(user_line); done_user = True
+    if not done_pass:
+        result.append(pass_line); done_pass = True
+
+for ln in lines:
+    s = ln.strip()
+    if s.startswith('[') and s.endswith(']'):
+        if cur == '[Preferences]':
+            flush_prefs()
+        cur = s
+        result.append(ln)
+        continue
+    if cur == '[Preferences]' and ln.startswith('WebUI\\Username='):
+        result.append(user_line); done_user = True; continue
+    if cur == '[Preferences]' and ln.startswith('WebUI\\Password_PBKDF2='):
+        result.append(pass_line); done_pass = True; continue
+    result.append(ln)
+if cur == '[Preferences]':
+    flush_prefs()
+if not done_pass:            # nao havia secao [Preferences]
+    result.append('[Preferences]')
+    flush_prefs()
+open(conf, 'w', encoding='utf-8').write('\n'.join(result) + '\n')
+PY
+        chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/.config
+        log "  usuario/senha da WebUI alinhados ao credentials.env"
+    fi
 fi
 
 # ------------------------------------------------------------- cloudflared --
