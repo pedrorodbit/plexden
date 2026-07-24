@@ -1,0 +1,806 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+plexctl — gerencia unificada da stack Plex + qBittorrent + Cloudflare Tunnel.
+
+Substitui os 7 scripts bash antigos (plex-services, plex-stack-start,
+plex-start, plexmediaserver.init, qb-cli, qb-postprocess, update-plex) por um
+unico dispatcher com subcomandos. So depende da stdlib do Python 3 (nenhum
+pacote via pip).
+
+  plexctl services {start|stop|restart|status|watch [segs]}   (root)
+  plexctl qb {list|paths|pause|resume|setlocation} ...
+  plexctl postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
+  plexctl update                                              (root)
+  plexctl plex-exec                                           (entrypoint do Plex)
+  plexctl _init {start|stop|status|restart}                  (stub SysV)
+
+Pontos de integracao (caminho fixo) viram stubs de 1 linha que chamam este
+script:
+  /etc/init.d/plexmediaserver   -> plexctl _init "$@"
+  /home/pedro/bin/plex-start    -> plexctl plex-exec
+  AutoRun do qBittorrent.conf   -> plexctl postprocess "%N" "%F"
+"""
+import http.cookiejar
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
+# --------------------------------------------------------------- constantes ---
+# Configuravel por /etc/plexctl.conf (KEY=VALUE) ou variaveis de ambiente, com
+# defaults sensatos. O provision.sh grava o .conf na instalacao.
+def _load_conf(path="/etc/plexctl.conf"):
+    conf = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    conf[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+_CONF = _load_conf()
+
+
+def _cfg(key, default):
+    return os.environ.get(key) or _CONF.get(key) or default
+
+
+PLEX_USER = _cfg("PLEXCTL_USER", "plex")
+PERSIST = _cfg("PLEXCTL_HOME", "/var/www/html/plex")
+MOVIES = os.path.join(PERSIST, "movies")
+SERIES = os.path.join(PERSIST, "series")
+LOGDIR = os.path.join(PERSIST, "logs")
+WATCHLOG = os.path.join(LOGDIR, "watchdog.log")
+AUTORUN_LOG = os.path.join(LOGDIR, "autorun.log")
+PREFS = os.path.join(PERSIST, "config", "Plex Media Server", "Preferences.xml")
+SCRIPTS_DIR = os.path.join(PERSIST, "scripts")
+
+PLEX_URL = "http://127.0.0.1:32400"
+QB_URL = os.environ.get("QB_HOST", "http://127.0.0.1:8081")
+
+PLEX_BIN_DIR = "/usr/lib/plexmediaserver"
+PLEX_PATTERN = "Plex Media Server"
+PLEX_PIDFILE = "/var/run/plexmediaserver.pid"
+PLEX_LOGFILE = "/tmp/plex.log"
+INIT_PLEX = "/etc/init.d/plexmediaserver"
+INIT_CF = "/etc/init.d/cloudflared"
+
+MIN_VIDEO_MB = 100
+VID_EXT = ("mkv", "mp4", "avi", "m4v", "mov", "wmv", "mpg", "mpeg", "ts")
+SUB_EXT = ("srt", "ass", "ssa", "sub", "idx")
+
+
+# -------------------------------------------------------------- utilidades ---
+def now():
+    return time.strftime("%F %T")
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def require_root(argv_hint=""):
+    if not is_root():
+        print(f"rode como root (sudo plexctl {argv_hint})".rstrip())
+        sys.exit(1)
+
+
+def current_user():
+    import pwd
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
+def sh(cmd, **kw):
+    """Executa comando (lista ou string) e devolve CompletedProcess."""
+    shell = isinstance(cmd, str)
+    return subprocess.run(cmd, shell=shell, text=True,
+                          capture_output=True, **kw)
+
+
+def http_code(url, timeout=5):
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        return 0
+
+
+def http_get(url, timeout=10):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read().decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def pgrep_x(name):
+    return sh(["pgrep", "-x", name]).returncode == 0
+
+
+def plex_token():
+    try:
+        with open(PREFS, encoding="utf-8", errors="replace") as f:
+            data = f.read()
+    except OSError:
+        return ""
+    m = re.search(r'PlexOnlineToken="([^"]*)"', data)
+    return m.group(1) if m else ""
+
+
+# ============================================================ SERVICES ========
+def plex_ok():
+    return http_code(f"{PLEX_URL}/identity") == 200
+
+
+def qbit_ok():
+    return http_code(f"{QB_URL}/") == 200
+
+
+def cf_ok():
+    return pgrep_x("cloudflared")
+
+
+def _plex_running_pid():
+    """PID do Plex via pidfile (se vivo) ou pgrep pelo padrao."""
+    for pf in (PLEX_PIDFILE, "/tmp/plexmediaserver.pid"):
+        try:
+            with open(pf) as f:
+                pid = f.read().strip()
+            if pid and sh(["kill", "-0", pid]).returncode == 0:
+                return pid
+        except OSError:
+            pass
+    for pat in (f"^{PLEX_BIN_DIR}/{PLEX_PATTERN}", PLEX_PATTERN):
+        r = sh(["pgrep", "-f", pat])
+        if r.returncode == 0:
+            return r.stdout.split()[0]
+    return None
+
+
+def _pidfile_writable():
+    try:
+        with open(PLEX_PIDFILE, "a"):
+            return PLEX_PIDFILE
+    except OSError:
+        return "/tmp/plexmediaserver.pid"
+
+
+def plex_process_start():
+    pid = _plex_running_pid()
+    if pid:
+        print(f"  Plex         ja rodando (pid {pid})")
+        return True
+    pidfile = _pidfile_writable()
+    starter = f"{sys.argv[0]} plex-exec"
+    if current_user() == PLEX_USER:
+        sh(f'nohup {starter} >{PLEX_LOGFILE} 2>&1 & echo $! >{pidfile}')
+    else:
+        r = sh(["su", "-", PLEX_USER, "-c",
+                f'nohup {starter} >{PLEX_LOGFILE} 2>&1 & echo $!'])
+        try:
+            with open(pidfile, "w") as f:
+                f.write(r.stdout.strip() + "\n")
+        except OSError:
+            pass
+    for i in range(1, 61):
+        if plex_ok():
+            print(f"  Plex         iniciado ({i}s)")
+            return True
+        time.sleep(1)
+    print(f"  Plex         FALHOU (veja {PLEX_LOGFILE})")
+    return False
+
+
+def plex_process_stop():
+    if not _plex_running_pid():
+        print("  Plex         ja parado")
+        _rm(PLEX_PIDFILE)
+        return
+    for pat in (PLEX_PATTERN, "Plex Plug-in", "Plex Tuner"):
+        sh(["pkill", "-f", pat])
+    for _ in range(25):
+        if not _plex_running_pid():
+            break
+        time.sleep(1)
+    if _plex_running_pid():
+        sh(["pkill", "-9", "-f", "Plex"])
+        time.sleep(2)
+    _rm(PLEX_PIDFILE)
+    print("  Plex         parado")
+
+
+def _rm(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def start_qbit():
+    if qbit_ok():
+        print("  qBittorrent  ja no ar")
+        return True
+    sh(["pkill", "-x", "qbittorrent-nox"])
+    time.sleep(3)
+    sh(["su", "-", PLEX_USER, "-c", "qbittorrent-nox --daemon"])
+    for i in range(1, 16):
+        if qbit_ok():
+            print(f"  qBittorrent  iniciado ({i}s)")
+            return True
+        time.sleep(1)
+    print("  qBittorrent  FALHOU")
+    return False
+
+
+def start_plex():
+    if plex_ok():
+        print("  Plex         ja no ar")
+        return True
+    return plex_process_start()
+
+
+def start_cf():
+    if cf_ok():
+        print("  cloudflared  ja no ar")
+        return True
+    if os.access(INIT_CF, os.X_OK):
+        sh([INIT_CF, "start"])
+    else:
+        print("  cloudflared  SEM init script (rode provision)")
+        return False
+    for i in range(1, 16):
+        if cf_ok():
+            print(f"  cloudflared  iniciado ({i}s)")
+            return True
+        time.sleep(1)
+    print("  cloudflared  FALHOU")
+    return False
+
+
+def do_start():
+    print("== Subindo servicos ==")
+    ok = True
+    ok &= start_qbit()
+    ok &= start_plex()
+    ok &= start_cf()
+    return 0 if ok else 1
+
+
+def do_stop():
+    print("== Parando servicos ==")
+    plex_process_stop()
+    # qBittorrent grava a sessao no SIGTERM; da ate 30s antes de forcar -9.
+    if pgrep_x("qbittorrent-nox"):
+        sh(["pkill", "-x", "qbittorrent-nox"])
+        for _ in range(30):
+            if not pgrep_x("qbittorrent-nox"):
+                break
+            time.sleep(1)
+        if pgrep_x("qbittorrent-nox"):
+            print("  qBittorrent  nao encerrou em 30s — forcando (sessao pode ser perdida)")
+            sh(["pkill", "-9", "-x", "qbittorrent-nox"])
+            time.sleep(1)
+    print("  qBittorrent  parado")
+    if os.access(INIT_CF, os.X_OK):
+        sh([INIT_CF, "stop"])
+    sh(["pkill", "-x", "cloudflared"])
+    print("  cloudflared  parado")
+    return 0
+
+
+def do_status():
+    print("== Status ==")
+    if plex_ok():
+        ident = http_get(f"{PLEX_URL}/identity", timeout=5)
+        vers = re.findall(r'version="([^"]*)"', ident)
+        v = vers[-1] if vers else "?"
+        cm = re.search(r'claimed="([01])"', ident)
+        print(f"  Plex         OK      v{v}  claimed={cm.group(1) if cm else '?'}")
+    else:
+        print("  Plex         PARADO")
+    print("  qBittorrent  OK" if qbit_ok() else "  qBittorrent  PARADO")
+    print("  cloudflared  OK" if cf_ok() else "  cloudflared  PARADO")
+    print("\n  Volume persistente:")
+    try:
+        st = os.statvfs(PERSIST)
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        used_pct = int(round((total - free) * 100 / total)) if total else 0
+        gb = lambda b: f"{b / (1024**3):.0f}G"
+        print(f"    {gb(free)} livres de {gb(total)} ({used_pct}% usado)")
+    except OSError:
+        pass
+    return 0
+
+
+def do_watch(interval):
+    os.makedirs(LOGDIR, exist_ok=True)
+    print(f"Vigiando a cada {interval}s. Log: {WATCHLOG}")
+    log = lambda m: open(WATCHLOG, "a").write(f"{now()} {m}\n")
+    log(f"watchdog iniciado (intervalo {interval}s)")
+    while True:
+        if not plex_ok():
+            log("Plex caiu — reerguendo")
+            start_plex()
+        if not qbit_ok():
+            log("qBittorrent caiu — reerguendo")
+            start_qbit()
+        if not cf_ok():
+            log("cloudflared caiu — reerguendo")
+            start_cf()
+        time.sleep(interval)
+
+
+def cmd_services(args):
+    require_root("services " + (args[0] if args else "status"))
+    os.makedirs(LOGDIR, exist_ok=True)
+    action = args[0] if args else "status"
+    if action == "start":
+        return do_start()
+    if action == "stop":
+        return do_stop()
+    if action == "restart":
+        do_stop()
+        time.sleep(3)
+        return do_start()
+    if action == "status":
+        return do_status()
+    if action == "watch":
+        do_watch(int(args[1]) if len(args) > 1 else 60)
+        return 0
+    print("Uso: plexctl services {start|stop|restart|status|watch [segundos]}")
+    return 1
+
+
+# ============================================================ INIT (stub) =====
+def cmd_init(args):
+    action = args[0] if args else ""
+    if action == "start":
+        return 0 if plex_process_start() else 1
+    if action == "stop":
+        plex_process_stop()
+        return 0
+    if action == "restart":
+        plex_process_stop()
+        time.sleep(2)
+        return 0 if plex_process_start() else 1
+    if action == "status":
+        pid = _plex_running_pid()
+        if pid:
+            code = http_code(f"{PLEX_URL}/identity")
+            print(f"Plex Media Server rodando (pid {pid}) — HTTP {code}")
+            return 0
+        print("Plex Media Server parado")
+        return 3
+    print("Uso: plexctl _init {start|stop|restart|status}")
+    return 1
+
+
+# ============================================================ PLEX-EXEC =======
+def cmd_plex_exec(args):
+    support = os.path.join(PERSIST, "config")
+    os.environ["PLEX_MEDIA_SERVER_HOME"] = PLEX_BIN_DIR
+    os.environ["PLEX_MEDIA_SERVER_MAX_PLUGIN_PROCS"] = "6"
+    os.environ["PLEX_MEDIA_SERVER_TMPDIR"] = "/tmp"
+    os.environ["PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR"] = support
+    ld = os.environ.get("LD_LIBRARY_PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = f"{PLEX_BIN_DIR}/lib:{ld}"
+    os.makedirs(support, exist_ok=True)
+    os.chdir(PLEX_BIN_DIR)
+    os.execv(f"./{PLEX_PATTERN}", [PLEX_PATTERN])
+
+
+# ============================================================ QBITTORRENT =====
+class QB:
+    def __init__(self):
+        self.creds = self._load_creds()
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.jar))
+
+    @staticmethod
+    def _load_creds():
+        path = os.environ.get("QB_CREDS", os.path.expanduser("~/.qbcreds"))
+        if not os.path.isfile(path):
+            sys.exit(f"ERRO: {path} nao existe.\n"
+                     "Crie com: printf 'QB_USER=admin\\nQB_PASS=SENHA\\n' "
+                     "> ~/.qbcreds && chmod 600 ~/.qbcreds")
+        c = {}
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    c[k.strip()] = v.strip()
+        if not c.get("QB_USER") or not c.get("QB_PASS"):
+            sys.exit(f"ERRO: QB_USER/QB_PASS ausentes em {path}")
+        return c
+
+    def _req(self, path, data=None):
+        url = f"{QB_URL}{path}"
+        body = urllib.parse.urlencode(data).encode() if data is not None else None
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Referer": QB_URL})
+        with self.opener.open(req, timeout=30) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+
+    def login(self):
+        try:
+            _, text = self._req("/api/v2/auth/login",
+                                {"username": self.creds["QB_USER"],
+                                 "password": self.creds["QB_PASS"]})
+        except Exception as e:
+            sys.exit(f"ERRO no login: {e}")
+        if text.strip() != "Ok.":
+            sys.exit(f"ERRO no login: {text or 'sem resposta'}\n"
+                     "(confira QB_USER/QB_PASS em ~/.qbcreds)")
+
+    def torrents(self, hashes=None):
+        path = "/api/v2/torrents/info"
+        if hashes:
+            path += "?" + urllib.parse.urlencode({"hashes": hashes})
+        _, text = self._req(path)
+        return json.loads(text)
+
+    def action(self, name, data):
+        code, _ = self._req(f"/api/v2/torrents/{name}", data)
+        return code
+
+
+def _fmt_size(b):
+    b = float(b)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024 or u == "TB":
+            return f"{b:.1f}{u}"
+        b /= 1024
+
+
+def _matching(torrents, term):
+    term = (term or "").lower()
+    return [t for t in torrents if not term or term in t["name"].lower()]
+
+
+def cmd_qb(args):
+    action = args[0] if args else "list"
+    qb = QB()
+    qb.login()
+
+    if action == "list":
+        ts = qb.torrents()
+        print(f"{'ESTADO':<12} {'%':>6} {'BAIXADO':>10} {'TOTAL':>10}  NOME")
+        print("-" * 100)
+        for t in ts:
+            print(f"{t['state']:<12} {t['progress']*100:5.1f}% "
+                  f"{_fmt_size(t['downloaded']):>10} {_fmt_size(t['size']):>10}  "
+                  f"{t['name'][:55]}")
+        print(f"\ntotal: {len(ts)} torrent(s)")
+        return 0
+
+    if action == "paths":
+        ts = qb.torrents()
+        counts = {}
+        for t in ts:
+            counts[t["save_path"]] = counts.get(t["save_path"], 0) + 1
+        print("destinos em uso:")
+        for p in sorted(counts, key=lambda k: -counts[k]):
+            print(f"  {counts[p]:3d}x  {p}")
+        print()
+        for t in ts:
+            print(f"  {t['hash'][:8]}  {t['save_path']}  {t['name'][:45]}")
+        return 0
+
+    if action in ("pause", "resume"):
+        term = args[1] if len(args) > 1 else ""
+        rows = _matching(qb.torrents(), term)
+        if not rows:
+            print(f'nenhum torrent casa com "{term}"' if term else "nenhum torrent")
+            return 0
+        print(f"{action} em:")
+        for t in rows:
+            print(f"  {t['name']}")
+        code = qb.action(action, {"hashes": "|".join(t["hash"] for t in rows)})
+        print(f"  -> HTTP {code}")
+        return 0
+
+    if action == "setlocation":
+        if len(args) < 2:
+            print("uso: plexctl qb setlocation <destino> [hash]")
+            return 1
+        dest = args[1]
+        h = args[2] if len(args) > 2 else "|".join(
+            t["hash"] for t in qb.torrents())
+        if not h:
+            print("nenhum torrent para mover")
+            return 0
+        code = qb.action("setLocation", {"hashes": h, "location": dest})
+        msg = {200: "ok — o qBittorrent move em background",
+               403: "ERRO 403: destino sem permissao de escrita",
+               409: "ERRO 409: destino invalido ou inacessivel"}.get(
+                   code, f"HTTP {code}")
+        print(msg)
+        return 0
+
+    print("Uso: plexctl qb {list|paths|setlocation <destino> [hash]|"
+          "pause [busca]|resume [busca]}")
+    return 1
+
+
+# ============================================================ POSTPROCESS =====
+_SERIES_RE = re.compile(
+    r"(s\d{1,2}[ ._;-]?e\d{1,3})|(\b\d{1,2}x\d{2}\b)|temporada|season|"
+    r"\btemp\b|epis[oó]di|complete[ ._-]*series", re.IGNORECASE)
+_SE_RE = re.compile(r"^(.*)[._\s-][Ss](\d{1,2})[._\s-]?[Ee]\d{1,3}")
+_NX_RE = re.compile(r"^(.*)[._\s-](\d{1,2})[xX](\d{2})([._\s-]|$)")
+
+
+def _autolog(msg):
+    os.makedirs(LOGDIR, exist_ok=True)
+    with open(AUTORUN_LOG, "a") as f:
+        f.write(f"{now()} {msg}\n")
+
+
+def _clean_show(raw):
+    return re.sub(r"\s+", " ", raw.replace(".", " ").replace("_", " ")).strip()
+
+
+def _parse_show_season(fname):
+    m = _SE_RE.match(fname) or _NX_RE.match(fname)
+    if not m:
+        return None
+    show = _clean_show(m.group(1))
+    return (show, int(m.group(2))) if show else None
+
+
+def _size_mb(path):
+    try:
+        return os.path.getsize(path) // (1024 * 1024)
+    except OSError:
+        return 0
+
+
+def _hardlink(src, dst):
+    if os.path.exists(dst):
+        _autolog(f"  ja existe, pulando: {dst}")
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        os.link(src, dst)
+        _autolog(f"  link: {dst}")
+    except OSError:
+        try:
+            shutil.copy2(src, dst)
+            _autolog(f"  copia (ln falhou): {dst}")
+        except OSError:
+            _autolog(f"  ERRO ao linkar: {src}")
+
+
+def _walk_files(content):
+    if os.path.isdir(content):
+        for root, _, files in os.walk(content):
+            for fn in files:
+                yield os.path.join(root, fn)
+    else:
+        yield content
+
+
+def _trigger_scan(scan_dir):
+    token = plex_token()
+    if not token:
+        _autolog("  AVISO: token do Plex ausente, scan nao disparado")
+        return
+    xml = http_get(f"{PLEX_URL}/library/sections?X-Plex-Token={token}")
+    key = None
+    try:
+        root = ET.fromstring(xml)
+        for d in root.findall("Directory"):
+            for loc in d.findall("Location"):
+                if loc.get("path") == scan_dir:
+                    key = d.get("key")
+                    break
+            if key:
+                break
+    except ET.ParseError:
+        pass
+    if key:
+        http_get(f"{PLEX_URL}/library/sections/{key}/refresh"
+                 f"?X-Plex-Token={token}")
+        _autolog(f"  scan disparado na secao {key} ({scan_dir})")
+    else:
+        _autolog(f"  AVISO: secao do Plex para {scan_dir} nao encontrada")
+
+
+def cmd_postprocess(args):
+    if len(args) < 2:
+        print('uso: plexctl postprocess "<nome>" "<caminho>"')
+        return 1
+    name, content = args[0], args[1]
+    if not os.path.exists(content):
+        _autolog(f"ERRO: caminho inexistente: {content}")
+        print("caminho inexistente")
+        return 1
+
+    _autolog(f"=== inicio: '{name}' <- {content}")
+    os.makedirs(MOVIES, exist_ok=True)
+    os.makedirs(SERIES, exist_ok=True)
+
+    vids = [f for f in _walk_files(content)
+            if f.rsplit(".", 1)[-1].lower() in VID_EXT]
+    kind = "series" if (_SERIES_RE.search(name) or
+                        any(_SERIES_RE.search(os.path.basename(v)) for v in vids)) \
+        else "movie"
+    _autolog(f"  tipo detectado: {kind}")
+
+    linked = 0
+    if kind == "movie":
+        for vid in vids:
+            if _size_mb(vid) < MIN_VIDEO_MB:
+                _autolog(f"  ignora video pequeno ({_size_mb(vid)}MB): "
+                         f"{os.path.basename(vid)}")
+                continue
+            _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid)))
+            linked += 1
+            base = vid.rsplit(".", 1)[0]
+            for ext in SUB_EXT:
+                sub = f"{base}.{ext}"
+                if os.path.exists(sub):
+                    _hardlink(sub, os.path.join(MOVIES, os.path.basename(sub)))
+        scan_dir = MOVIES
+    else:
+        fallback = os.path.join(SERIES, _clean_show(name))
+        for f in _walk_files(content):
+            ext = f.rsplit(".", 1)[-1].lower()
+            if ext in VID_EXT:
+                if _size_mb(f) < MIN_VIDEO_MB:
+                    continue
+            elif ext not in SUB_EXT:
+                continue
+            fname = os.path.basename(f)
+            ss = _parse_show_season(fname)
+            if ss:
+                show, season = ss
+                dst = os.path.join(SERIES, show, f"Season {season:02d}", fname)
+            else:
+                _autolog(f"  sem temporada no nome, usando fallback: {fname}")
+                dst = os.path.join(fallback, fname)
+            _hardlink(f, dst)
+            linked += 1
+        scan_dir = SERIES
+
+    _autolog(f"  arquivos linkados: {linked}")
+    _trigger_scan(scan_dir)
+    _autolog(f"=== fim: '{name}' ({kind}, {linked} arquivos)")
+    print(f"ok: {name} -> {kind} ({linked} arquivos linkados)")
+    return 0
+
+
+# ============================================================ UPDATE ==========
+def ensure_init_stub():
+    """(Re)cria os stubs de integracao que apontam para o plexctl."""
+    self = os.path.abspath(sys.argv[0])
+    with open(INIT_PLEX, "w") as f:
+        f.write("#!/bin/sh\n"
+                "### BEGIN INIT INFO\n"
+                "# Provides:          plexmediaserver\n"
+                "# Required-Start:    $network $remote_fs\n"
+                "# Required-Stop:     $network $remote_fs\n"
+                "# Default-Start:     2 3 4 5\n"
+                "# Default-Stop:      0 1 6\n"
+                "# Short-Description: Plex Media Server\n"
+                "### END INIT INFO\n"
+                f'exec {self} _init "$@"\n')
+    os.chmod(INIT_PLEX, 0o755)
+
+
+def cmd_update(args):
+    require_root("update")
+    token = plex_token()
+    if not token:
+        print("ERRO: PlexOnlineToken nao encontrado — servidor claimado?")
+        return 1
+    curver = sh(["dpkg-query", "-W", "-f=${Version}",
+                 "plexmediaserver"]).stdout.strip()
+    print(f"== Versao instalada: {curver}")
+
+    print("== Backup do banco ==")
+    backup = os.path.join(PERSIST, "config-backup-" + time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        shutil.copytree(os.path.join(PERSIST, "config"), backup, symlinks=True)
+    except Exception as e:
+        print(f"ERRO: backup falhou: {e}")
+        return 1
+    print(f"   {backup} ({sh(['du','-sh',backup]).stdout.split()[0]})")
+
+    print("== Baixando .deb ==")
+    deb = "/tmp/plex-new.deb"
+    url = ("https://plex.tv/downloads/latest/5?channel=16&build=linux-x86_64"
+           f"&distro=debian&X-Plex-Token={token}")
+    if sh(["curl", "-sL", "--max-time", "600", "-o", deb, url]).returncode != 0:
+        print("ERRO: download falhou")
+        return 1
+    newver = sh(["dpkg-deb", "-f", deb, "Version"]).stdout.strip()
+    if not newver:
+        print("ERRO: pacote invalido")
+        _rm(deb)
+        return 1
+    print(f"   baixado: {newver} ({sh(['du','-h',deb]).stdout.split()[0]})")
+
+    if newver == curver:
+        print("== Ja esta na versao mais recente. Nada a fazer.")
+        _rm(deb)
+        shutil.rmtree(backup, ignore_errors=True)
+        return 0
+
+    print("== Parando Plex ==")
+    plex_process_stop()
+    print(f"== Instalando {newver} ==")
+    if sh(f"DEBIAN_FRONTEND=noninteractive dpkg -i {deb}").returncode != 0:
+        sh(["apt-get", "-f", "install", "-y"])
+    print("== Restaurando stub do init (o pacote o remove) ==")
+    ensure_init_stub()
+    print("== Iniciando ==")
+    plex_process_start()
+
+    print("== Verificacao ==")
+    print("   versao:", sh(["dpkg-query", "-W", "-f=${Version}",
+                            "plexmediaserver"]).stdout.strip())
+    ident = http_get(f"{PLEX_URL}/identity", timeout=10)
+    cm = re.search(r'claimed="[01]"', ident)
+    if cm:
+        print("  ", cm.group(0))
+    _rm(deb)
+    print(f"\nPronto. Backup do banco anterior: {backup}")
+    return 0
+
+
+# ============================================================ DISPATCH ========
+USAGE = """plexctl — stack Plex + qBittorrent + Cloudflare
+
+  plexctl services {start|stop|restart|status|watch [segs]}   (root)
+  plexctl qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
+  plexctl postprocess "<nome>" "<caminho>"
+  plexctl update                                              (root)
+  plexctl plex-exec
+  plexctl _init {start|stop|restart|status}
+"""
+
+
+def main(argv):
+    if not argv:
+        print(USAGE)
+        return 1
+    cmd, rest = argv[0], argv[1:]
+    dispatch = {
+        "services": cmd_services,
+        "qb": cmd_qb,
+        "postprocess": cmd_postprocess,
+        "update": cmd_update,
+        "plex-exec": cmd_plex_exec,
+        "_init": cmd_init,
+    }
+    fn = dispatch.get(cmd)
+    if not fn:
+        print(USAGE)
+        return 1
+    return fn(rest)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)

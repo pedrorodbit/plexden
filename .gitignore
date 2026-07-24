@@ -1,0 +1,16 @@
+# Nunca versionar segredos nem dados — este repo e' publico.
+credentials.env
+*.pem
+*.key
+*_cert.json
+cloudflared/
+config/
+Preferences.xml
+torrents/
+BT_backup/
+*.log
+config-backup-*/
+
+# Python
+__pycache__/
+*.pyc
