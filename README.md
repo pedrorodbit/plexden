@@ -1,5 +1,7 @@
 # plexctl
 
+[![CI](https://github.com/pedrorodbit/plexctl/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrorodbit/plexctl/actions/workflows/ci.yml)
+
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
 roda em qualquer Linux e é tocado por um único script Python. Sem framework, sem
 dependência exótica: só a biblioteca padrão do Python e utilitários comuns de
@@ -21,10 +23,11 @@ Numa máquina nova, como root, uma linha resolve:
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh | sudo bash
 ```
 
-> **Um detalhe honesto:** o instalador usa `apt`/`dpkg` para puxar Plex,
-> qBittorrent e cloudflared, então ele espera uma distro dessa família (Debian,
-> Ubuntu e derivados). O `plexctl` em si é agnóstico; quem é preso ao `apt` é só
-> a instalação e o `plexctl update`.
+> **Sobre distros:** o instalador (e o `plexctl update`) detecta sozinho o seu
+> gerenciador de pacotes — `apt`, `dnf`/`yum`, `pacman` ou `zypper` — e segue a
+> partir daí. O Plex tem repositório oficial nas famílias Debian e RPM; no Arch
+> não há pacote oficial, então o instalador te aponta para o AUR e cuida do
+> resto. Detalhes na tabela de [distros suportadas](#distros-suportadas).
 
 Prefere outro caminho ou outro usuário? É só passar por variável de ambiente:
 
@@ -37,6 +40,38 @@ O instalador baixa o `plexctl` e o `provision.sh`, puxa as dependências
 (`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
 pastas e sobe o que consegue. No fim, ele te mostra o que falta fazer à mão —
 que são justamente as coisas que **não** cabem num repositório público.
+
+## Distros suportadas
+
+O `plexctl` é escrito só com a biblioteca padrão do Python, então roda em
+qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação** (o
+`provision.sh`) e o **`plexctl update`** — e esses detectam o gerenciador
+sozinhos. Os pacotes base e o `cloudflared` (binário estático) são iguais em
+toda parte; o que muda é como o Plex chega.
+
+| Família | Distros | Gerenciador | Plex | CI |
+|---|---|---|---|---|
+| Debian | Debian, Ubuntu, Mint e derivados | `apt` | repositório oficial | ✅ testado |
+| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | repositório oficial | ✅ Fedora testado |
+| SUSE | openSUSE, SLES | `zypper` | repositório oficial | — |
+| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ testado |
+
+Onde diz "CI testado", cada push roda o `provision.sh` em modo dry-run naquela
+distro e confere que o gerenciador certo foi detectado e que o `plexctl` compila
+sob o Python de lá — é o que o badge de CI lá no topo reflete. Ainda é validação
+de detecção e sintaxe, não uma instalação completa em VM; o resto é exercitado à
+mão.
+
+Duas ressalvas honestas:
+
+- **Arch** — o Plex não tem pacote oficial. O instalador prepara tudo e te manda
+  instalar pelo AUR (ex.: `yay -S plex-media-server`); depois é só rodar o
+  `provision.sh` de novo. O `plexctl update`, no Arch, também aponta pro AUR em
+  vez de baixar `.deb`/`.rpm`.
+- **Fedora/RHEL** — se o SELinux estiver em *enforcing*, ele pode barrar o Plex
+  de seguir os hardlinks da biblioteca ou de varrer pastas fora do lugar
+  esperado. Se a biblioteca aparecer vazia mesmo com os arquivos lá, olhe o
+  `audit.log` — costuma ser isso.
 
 ## Os segredos ficam com você
 
@@ -67,7 +102,7 @@ O que você faz depois de instalar:
 sudo plexctl services {start|stop|restart|status|watch [segundos]}
 plexctl qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
 plexctl postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
-sudo plexctl update                          # atualiza o Plex pelo .deb oficial
+sudo plexctl update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
 ```
 
 O que cada um faz:
@@ -83,8 +118,9 @@ O que cada um faz:
   tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
   `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
   mesma pasta em vez de virarem dez séries soltas.
-- **`update`** — o `apt` costuma ficar atrás no Plex, então este comando baixa o
-  `.deb` oficial, faz backup do banco e reinstala.
+- **`update`** — o repositório da distro costuma ficar atrás no Plex, então este
+  comando baixa o pacote oficial mais novo (`.deb` ou `.rpm`, conforme a família;
+  no Arch, aponta pro AUR), faz backup do banco e reinstala.
 
 ## Ajustando ao seu setup
 
