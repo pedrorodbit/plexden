@@ -9,9 +9,9 @@ Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde 
 PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
 container minimalista, por exemplo). Ele dá conta disso. Mas não se limita a esse
 cenário: num Linux comum, com systemd, também roda de boa — e aí você pode deixar
-o systemd cuidar do autostart. (A gerência de Plex e qBittorrent é a mesma em
-qualquer caso; só o cloudflared, num host com systemd, você acompanha pelo
-`systemctl` em vez do `plexctl`.)
+o systemd cuidar do autostart. O `plexctl services` gerencia os três serviços em
+qualquer caso — inclusive o cloudflared, detectando sozinho se ele roda via
+systemd ou SysV.
 
 ## Instalando
 

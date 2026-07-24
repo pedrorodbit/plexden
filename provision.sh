@@ -246,10 +246,14 @@ if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] && [ -f "$PER
     chmod 600 /etc/cloudflared/cert.pem /etc/cloudflared/*.json
     log "  credenciais restauradas do volume persistente"
 
-    if [ ! -f /etc/init.d/cloudflared ]; then
-        cloudflared service install >/dev/null 2>&1 && log "  servico instalado"
-    else
+    # 'cloudflared service install' cria unit do systemd (onde ha systemd) ou
+    # script SysV. So instala se ainda nao houver nenhum dos dois.
+    if [ -f /etc/init.d/cloudflared ] || \
+       { command -v systemctl >/dev/null 2>&1 && \
+         systemctl list-unit-files cloudflared.service 2>/dev/null | grep -q cloudflared; }; then
         log "  servico ja instalado"
+    else
+        cloudflared service install >/dev/null 2>&1 && log "  servico instalado"
     fi
 else
     log "  AVISO: credenciais do tunnel ausentes em $PERSIST/cloudflared/"
