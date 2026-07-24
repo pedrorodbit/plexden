@@ -1,81 +1,122 @@
 # plexctl
 
-Stack de mídia auto-hospedada em um container Debian: **Plex Media Server +
-qBittorrent + Cloudflare Tunnel**, gerenciada por um único script Python
-(`plexctl`) — sem dependências além da biblioteca padrão.
+Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
+cabe num container Debian e é tocado por um único script Python. Sem framework,
+sem dependência exótica: só a biblioteca padrão do Python e alguns utilitários
+que qualquer Debian já tem.
 
-Pensado para containers minimalistas onde **PID 1 = bash** (sem systemd, sem
-cron, sem `start-stop-daemon`).
+Nasceu para aqueles containers pelados, sem systemd nem cron, onde o PID 1 é
+literalmente um `bash`. Se o seu ambiente é assim, você está no lugar certo.
 
-## Instalação
+## Instalando
 
-Num container Debian novo (como root):
+Num container Debian novo, como root, uma linha resolve:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh | sudo bash
 ```
 
-Personalizando caminho e usuário:
+Prefere outro caminho ou outro usuário? É só passar por variável de ambiente:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh \
   | sudo PLEXCTL_HOME=/srv/plex PLEXCTL_USER=media bash
 ```
 
-O instalador baixa o `plexctl` + `provision.sh`, instala as dependências
-(`python3`, `qbittorrent-nox`, Plex, `cloudflared`), cria a estrutura persistente
-e sobe o que der. Ao final, imprime os passos com **segredos** (claim do Plex,
-senha do qBittorrent, credenciais do túnel) — que **você fornece na hora**, pois
-nunca ficam no repositório.
+O instalador baixa o `plexctl` e o `provision.sh`, puxa as dependências
+(`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
+pastas e sobe o que consegue. No fim, ele te mostra o que falta fazer à mão —
+que são justamente as coisas que **não** cabem num repositório público.
 
-> ⚠️ **Segredos nunca são versionados.** Copie `credentials.env.example` para
-> `credentials.env` (fora do Git) e ponha as credenciais do túnel em
-> `$PLEXCTL_HOME/cloudflared/`. Veja `.gitignore`.
+## Os segredos ficam com você
 
-## Comandos
+Este repositório é público, então por princípio ele **não** guarda nada sensível:
+nem senha, nem token do Plex, nem as credenciais do túnel. Isso é de propósito —
+segredo em histórico de Git é para sempre.
+
+O que você faz depois de instalar:
+
+1. **qBittorrent** — copie o modelo e ponha sua senha:
+   ```bash
+   cp $PLEXCTL_HOME/credentials.env.example $PLEXCTL_HOME/credentials.env
+   chmod 600 $PLEXCTL_HOME/credentials.env   # edite QB_USER / QB_PASS
+   sudo $PLEXCTL_HOME/provision.sh           # regenera o ~/.qbcreds
+   ```
+2. **Plex** — um servidor recém-instalado nasce "não reivindicado". Pegue um token
+   em [plex.tv/claim](https://plex.tv/claim) (ele expira em 4 minutos) e:
+   ```bash
+   curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
+   sudo plexctl services restart
+   ```
+3. **Cloudflare Tunnel** (opcional) — jogue suas credenciais em
+   `$PLEXCTL_HOME/cloudflared/` e rode o `provision.sh` de novo.
+
+## O dia a dia
 
 ```bash
 sudo plexctl services {start|stop|restart|status|watch [segundos]}
 plexctl qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
-plexctl postprocess "<nome>" "<caminho>"     # chamado pelo AutoRun do qBittorrent
-sudo plexctl update                          # atualiza o Plex via .deb oficial
+plexctl postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
+sudo plexctl update                          # atualiza o Plex pelo .deb oficial
 ```
 
-| Subcomando | O que faz |
-|---|---|
-| `services` | sobe/derruba/vigia Plex + qBittorrent + cloudflared, com health-check HTTP real |
-| `qb` | controla o qBittorrent pela WebUI API (login por usuário/senha em `~/.qbcreds`) |
-| `postprocess` | detecta filme/série e cria **hardlinks** na biblioteca, agrupando temporadas em `series/<Show>/Season NN/` |
-| `update` | baixa o `.deb` oficial do Plex, faz backup do banco e reinstala |
+O que cada um faz:
 
-## Configuração
+- **`services`** — sobe, derruba e vigia Plex + qBittorrent + cloudflared. Ele
+  checa saúde de verdade (HTTP, não só "o processo existe"), então um serviço
+  travado é derrubado e reerguido em vez de fingir que está tudo bem.
+- **`qb`** — conversa com a WebUI do qBittorrent (login por usuário/senha guardado
+  em `~/.qbcreds`). Listar, pausar, retomar, mover — sem abrir o navegador.
+- **`postprocess`** — quando um download termina, decide se é filme ou série e
+  cria um **hardlink** na biblioteca (sem duplicar espaço, e o torrent continua
+  semeando do arquivo original). Séries são agrupadas por show e temporada
+  tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
+  `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
+  mesma pasta em vez de virarem dez séries soltas.
+- **`update`** — o `apt` costuma ficar atrás no Plex, então este comando baixa o
+  `.deb` oficial, faz backup do banco e reinstala.
 
-`plexctl` lê, nesta ordem: variáveis de ambiente → `/etc/plexctl.conf` → defaults.
+## Ajustando ao seu setup
 
-| Variável | Default | Descrição |
+O `plexctl` procura configuração nesta ordem: variável de ambiente →
+`/etc/plexctl.conf` → um default razoável.
+
+| Variável | Default | Para quê |
 |---|---|---|
-| `PLEXCTL_HOME` | `/var/www/html/plex` | diretório persistente da stack |
+| `PLEXCTL_HOME` | `/var/www/html/plex` | onde a stack vive (de preferência, um volume que persista) |
 | `PLEXCTL_USER` | `plex` | usuário que roda os serviços |
-| `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se vazio, detecta pelo `*.json` em `cloudflared/` |
+| `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se em branco, ele acha sozinho pelo `*.json` em `cloudflared/` |
 
-O `provision.sh` grava `/etc/plexctl.conf` com os valores escolhidos.
+O `provision.sh` grava esses valores em `/etc/plexctl.conf` — então, se você
+rodar de novo mais tarde, ele lembra do que você escolheu.
 
-## Arquitetura
+## Como as peças se encaixam
 
-Tudo vive em `$PLEXCTL_HOME` (um bind mount que persiste à recriação do
-container). Pontos de integração de caminho fixo são stubs de 1 linha que chamam
-o `plexctl`:
+Tudo mora em `$PLEXCTL_HOME`, que idealmente é um bind mount — assim o container
+pode ser recriado sem levar seus dados junto. Nos lugares onde algo externo
+espera um caminho fixo, deixamos um stub de uma linha que só chama o `plexctl`:
 
-| Arquivo | Aponta para |
+| Arquivo | Chama |
 |---|---|
 | `/etc/init.d/plexmediaserver` | `plexctl _init "$@"` |
-| `/usr/local/bin/plex-stack-start` | `plexctl services start` (entrypoint) |
+| `/usr/local/bin/plex-stack-start` | `plexctl services start` (bom para o entrypoint) |
 | `~/bin/plex-start` | `plexctl plex-exec` |
 | AutoRun no `qBittorrent.conf` | `plexctl postprocess "%N" "%F"` |
 
-> Nada sobe sozinho (PID 1 = bash). Para autostart, chame `plexctl services start`
-> no entrypoint do container, ou deixe um `plexctl services watch` em background.
+Só um lembrete: **nada sobe sozinho** aqui (lembra do PID 1 = bash?). Para
+autostart, chame `plexctl services start` no entrypoint do container, ou deixe um
+`plexctl services watch` rodando em segundo plano para reerguer o que cair.
+
+## Sobre a autoria
+
+Este projeto foi escrito por uma IA (Claude, da Anthropic) em parceria com um
+humano — que trouxe o problema, as manhas do servidor e os "não, assim não",
+revisou cada passo e testou tudo num servidor de verdade.
+
+Nada aqui foi publicado no escuro: rodou, quebrou, foi consertado e rodou de
+novo. Ainda assim, é código da internet — use por sua conta e risco, e abra uma
+issue se achar algo torto.
 
 ## Licença
 
-MIT — veja [LICENSE](LICENSE).
+MIT — veja [LICENSE](LICENSE). Faça o que quiser, só não me culpe se pegar fogo.
