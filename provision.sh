@@ -16,7 +16,7 @@ set -u
 # default. Assim, re-rodar num servidor ja configurado preserva os valores dele.
 _ENV_HOME="${PLEXCTL_HOME:-}"; _ENV_USER="${PLEXCTL_USER:-}"
 [ -r /etc/plexctl.conf ] && . /etc/plexctl.conf
-PERSIST="${_ENV_HOME:-${PLEXCTL_HOME:-/var/www/html/plex}}"
+PERSIST="${_ENV_HOME:-${PLEXCTL_HOME:-/srv/plexctl}}"
 PLEX_USER="${_ENV_USER:-${PLEXCTL_USER:-plex}}"
 # UUID do tunnel: se vazio, e auto-detectado a partir de cloudflared/*.json.
 TUNNEL_UUID="${CF_TUNNEL_UUID:-}"
@@ -27,9 +27,12 @@ fail() { echo "ERRO: $*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
 # cria o usuario da stack se ainda nao existir
 id "$PLEX_USER" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$PLEX_USER" && log "usuario $PLEX_USER criado"; }
+# Avisa se $PERSIST nao parece estar num mount dedicado (dado que so ele
+# persiste a recriacao do container). Checa o proprio dir e o pai.
 mountpoint -q "$PERSIST" 2>/dev/null || \
-  grep -q " /var/www/html " /proc/mounts || \
-  log "AVISO: /var/www/html nao aparece como mount — confirme que persiste!"
+  mountpoint -q "$(dirname "$PERSIST")" 2>/dev/null || \
+  grep -qF " $PERSIST " /proc/mounts || \
+  log "AVISO: $PERSIST nao aparece como mount — confirme que persiste!"
 
 # ---------------------------------------------------------------- pacotes ---
 log "== Pacotes =="

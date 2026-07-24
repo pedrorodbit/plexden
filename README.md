@@ -93,7 +93,7 @@ O `plexctl` procura configuração nesta ordem: variável de ambiente →
 
 | Variável | Default | Para quê |
 |---|---|---|
-| `PLEXCTL_HOME` | `/var/www/html/plex` | onde a stack vive (de preferência, um volume que persista) |
+| `PLEXCTL_HOME` | `/srv/plexctl` | onde a stack vive (de preferência, um volume que persista) |
 | `PLEXCTL_USER` | `plex` | usuário que roda os serviços |
 | `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se em branco, ele acha sozinho pelo `*.json` em `cloudflared/` |
 

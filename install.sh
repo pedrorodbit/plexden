@@ -17,7 +17,7 @@ set -euo pipefail
 REPO="${PLEXCTL_REPO:-pedrorodbit/plexctl}"
 BRANCH="${PLEXCTL_BRANCH:-main}"
 RAW="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
-PLEXCTL_HOME="${PLEXCTL_HOME:-/var/www/html/plex}"
+PLEXCTL_HOME="${PLEXCTL_HOME:-/srv/plexctl}"
 PLEXCTL_USER="${PLEXCTL_USER:-plex}"
 
 if [ "$(id -u)" -ne 0 ]; then

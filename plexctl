@@ -58,7 +58,7 @@ def _cfg(key, default):
 
 
 PLEX_USER = _cfg("PLEXCTL_USER", "plex")
-PERSIST = _cfg("PLEXCTL_HOME", "/var/www/html/plex")
+PERSIST = _cfg("PLEXCTL_HOME", "/srv/plexctl")
 MOVIES = os.path.join(PERSIST, "movies")
 SERIES = os.path.join(PERSIST, "series")
 LOGDIR = os.path.join(PERSIST, "logs")
