@@ -34,47 +34,131 @@ mountpoint -q "$PERSIST" 2>/dev/null || \
   grep -qF " $PERSIST " /proc/mounts || \
   log "AVISO: $PERSIST nao aparece como mount — confirme que persiste!"
 
-# ---------------------------------------------------------------- pacotes ---
-log "== Pacotes =="
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# ------------------------------------------------- gerenciador de pacotes ---
+# Camada fina sobre o gerenciador da distro. So o bootstrap (este script) e o
+# 'plexctl update' dependem disto; o resto do plexctl e' agnostico.
+PKG=""
+detect_pkg() {
+    for m in apt-get dnf yum pacman zypper; do
+        command -v "$m" >/dev/null 2>&1 && { PKG="$m"; return 0; }
+    done
+    fail "nenhum gerenciador de pacotes suportado (apt/dnf/yum/pacman/zypper)"
+}
+
+pkg_refresh() {
+    case "$PKG" in
+        apt-get) apt-get update -qq ;;
+        pacman)  pacman -Sy --noconfirm >/dev/null ;;
+        zypper)  zypper -n refresh >/dev/null ;;
+        dnf|yum) : ;;   # atualizam os metadados sob demanda
+    esac
+}
+
+pkg_installed() {   # $1 = pacote
+    case "$PKG" in
+        apt-get)        dpkg -s "$1" >/dev/null 2>&1 ;;
+        pacman)         pacman -Q "$1" >/dev/null 2>&1 ;;
+        dnf|yum|zypper) rpm -q "$1" >/dev/null 2>&1 ;;
+    esac
+}
+
+pkg_install() {     # $@ = pacotes
+    case "$PKG" in
+        apt-get) DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
+        dnf)     dnf install -y -q "$@" ;;
+        yum)     yum install -y -q "$@" ;;
+        pacman)  pacman -S --noconfirm --needed "$@" ;;
+        zypper)  zypper -n install "$@" ;;
+    esac
+}
 
 install_if_missing() {
-    if dpkg -s "$1" >/dev/null 2>&1; then
+    if pkg_installed "$1"; then
         log "  $1 ja instalado"
     else
         log "  instalando $1"
-        apt-get install -y -qq "$1" || fail "falha ao instalar $1"
+        pkg_install "$1" || fail "falha ao instalar $1"
     fi
 }
 
-for p in curl wget gnupg ca-certificates procps psmisc sudo qbittorrent-nox python3; do
+# ---------------------------------------------------------------- pacotes ---
+log "== Pacotes =="
+detect_pkg
+log "  gerenciador detectado: $PKG"
+pkg_refresh
+
+# Nomes que variam por familia: procps -> procps-ng (rpm/arch); python3 ->
+# python (arch); gnupg so e' preciso no apt (dearmor da chave do Plex).
+case "$PKG" in
+    apt-get)        base="curl wget ca-certificates sudo qbittorrent-nox gnupg procps psmisc python3" ;;
+    pacman)         base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python" ;;
+    dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3" ;;
+esac
+for p in $base; do
     install_if_missing "$p"
 done
 
-# Plex (repositorio oficial)
-if ! dpkg -s plexmediaserver >/dev/null 2>&1; then
+# ------------------------------------------------------------------- plex ---
+# Familia deb: repo apt assinado. Familia rpm: .repo + rpm --import. Arch: AUR.
+install_plex() {
+    if pkg_installed plexmediaserver; then
+        log "  plexmediaserver ja instalado"
+        return 0
+    fi
     log "  instalando plexmediaserver"
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://downloads.plex.tv/plex-keys/PlexSign.key \
-      | gpg --dearmor -o /etc/apt/keyrings/plex.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" \
-      > /etc/apt/sources.list.d/plexmediaserver.list
-    apt-get update -qq
-    apt-get install -y -qq plexmediaserver || fail "falha ao instalar plexmediaserver"
-else
-    log "  plexmediaserver ja instalado"
-fi
+    case "$PKG" in
+        apt-get)
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://downloads.plex.tv/plex-keys/PlexSign.key \
+              | gpg --dearmor -o /etc/apt/keyrings/plex.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" \
+              > /etc/apt/sources.list.d/plexmediaserver.list
+            apt-get update -qq
+            pkg_install plexmediaserver || fail "falha ao instalar plexmediaserver"
+            ;;
+        dnf|yum|zypper)
+            rpm --import https://downloads.plex.tv/plex-keys/PlexSign.key \
+              || fail "falha ao importar a chave do Plex"
+            repodir=/etc/yum.repos.d
+            [ "$PKG" = zypper ] && repodir=/etc/zypp/repos.d
+            mkdir -p "$repodir"
+            cat > "$repodir/plex.repo" <<'REPO'
+[PlexRepo]
+name=Plex
+baseurl=https://downloads.plex.tv/repo/rpm/$basearch/
+enabled=1
+gpgkey=https://downloads.plex.tv/plex-keys/PlexSign.key
+gpgcheck=1
+REPO
+            pkg_install plexmediaserver || fail "falha ao instalar plexmediaserver"
+            ;;
+        pacman)
+            log "  Arch: o Plex nao tem pacote oficial nos repos."
+            log "        Instale pelo AUR (ex.: yay -S plex-media-server) e rode este script de novo."
+            ;;
+    esac
+}
+install_plex
 
-# Cloudflared
-if ! command -v cloudflared >/dev/null 2>&1; then
-    log "  instalando cloudflared"
-    curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
-      -o /tmp/cf.deb || fail "download do cloudflared falhou"
-    dpkg -i /tmp/cf.deb || apt-get -f install -y
-else
-    log "  cloudflared ja instalado"
-fi
+# ------------------------------------------------------------- cloudflared ---
+# Binario estatico oficial: portavel em qualquer distro (dispensa .deb/.rpm).
+install_cloudflared() {
+    if command -v cloudflared >/dev/null 2>&1; then
+        log "  cloudflared ja instalado"
+        return 0
+    fi
+    log "  instalando cloudflared (binario estatico)"
+    case "$(uname -m)" in
+        x86_64|amd64)  cfarch=amd64 ;;
+        aarch64|arm64) cfarch=arm64 ;;
+        armv7l|armhf)  cfarch=arm ;;
+        *) fail "arquitetura sem binario cloudflared: $(uname -m)" ;;
+    esac
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfarch}" \
+      -o /usr/local/bin/cloudflared || fail "download do cloudflared falhou"
+    chmod +x /usr/local/bin/cloudflared
+}
+install_cloudflared
 
 # ------------------------------------------------------------- diretorios ---
 log "== Diretorios persistentes =="
