@@ -1,20 +1,25 @@
 # plexctl
 
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
-cabe num container Debian e é tocado por um único script Python. Sem framework,
-sem dependência exótica: só a biblioteca padrão do Python e alguns utilitários
-que qualquer Debian já tem.
+cabe num container Linux enxuto e é tocado por um único script Python. Sem
+framework, sem dependência exótica: só a biblioteca padrão do Python e alguns
+utilitários que qualquer Linux já traz.
 
 Nasceu para aqueles containers pelados, sem systemd nem cron, onde o PID 1 é
 literalmente um `bash`. Se o seu ambiente é assim, você está no lugar certo.
 
 ## Instalando
 
-Num container Debian novo, como root, uma linha resolve:
+Num container novo, como root, uma linha resolve:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh | sudo bash
 ```
+
+> **Um detalhe honesto:** o instalador usa `apt`/`dpkg` para puxar Plex,
+> qBittorrent e cloudflared, então ele espera uma distro dessa família (Debian,
+> Ubuntu e derivados). O `plexctl` em si é agnóstico; quem é preso ao `apt` é só
+> a instalação e o `plexctl update`.
 
 Prefere outro caminho ou outro usuário? É só passar por variável de ambiente:
 
