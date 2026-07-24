@@ -1,19 +1,19 @@
 # plexctl
 
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
-cabe num container Linux enxuto e é tocado por um único script Python. Sem
-framework, sem dependência exótica: só a biblioteca padrão do Python e alguns
-utilitários que qualquer Linux já traz.
+roda em qualquer Linux e é tocado por um único script Python. Sem framework, sem
+dependência exótica: só a biblioteca padrão do Python e alguns utilitários que
+qualquer Linux já traz.
 
-Foi feito pensando no caso mais chato — aqueles containers pelados, sem systemd
-nem cron, onde o PID 1 é literalmente um `bash` e nada sobe sozinho. Ele dá conta
-disso. Mas não se limita a esse cenário: num Linux comum, com systemd, roda igual
-de bem (e aí você pode até deixar o systemd cuidar do autostart). Se o seu
-ambiente é um desses containers minimalistas, melhor ainda — é onde ele brilha.
+Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde o
+PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
+container minimalista, por exemplo). Ele dá conta disso. Mas não se limita a esse
+cenário: num Linux comum, com systemd, roda igual de bem — e aí você pode até
+deixar o systemd cuidar do autostart.
 
 ## Instalando
 
-Num container novo, como root, uma linha resolve:
+Numa máquina nova, como root, uma linha resolve:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh | sudo bash
@@ -100,9 +100,10 @@ rodar de novo mais tarde, ele lembra do que você escolheu.
 
 ## Como as peças se encaixam
 
-Tudo mora em `$PLEXCTL_HOME`, que idealmente é um bind mount — assim o container
-pode ser recriado sem levar seus dados junto. Nos lugares onde algo externo
-espera um caminho fixo, deixamos um stub de uma linha que só chama o `plexctl`:
+Tudo mora em `$PLEXCTL_HOME`, que de preferência fica num volume que persiste —
+assim você reinstala (ou recria o container, se for o caso) sem levar seus dados
+junto. Nos lugares onde algo externo espera um caminho fixo, deixamos um stub de
+uma linha que só chama o `plexctl`:
 
 | Arquivo | Chama |
 |---|---|
@@ -111,9 +112,10 @@ espera um caminho fixo, deixamos um stub de uma linha que só chama o `plexctl`:
 | `~/bin/plex-start` | `plexctl plex-exec` |
 | AutoRun no `qBittorrent.conf` | `plexctl postprocess "%N" "%F"` |
 
-Só um lembrete: **nada sobe sozinho** aqui (lembra do PID 1 = bash?). Para
-autostart, chame `plexctl services start` no entrypoint do container, ou deixe um
-`plexctl services watch` rodando em segundo plano para reerguer o que cair.
+Só um lembrete: num sistema sem init, **nada sobe sozinho** (lembra do PID 1 =
+bash?). Para autostart, chame `plexctl services start` no boot — um serviço
+systemd, o entrypoint do container, o que fizer sentido no seu setup — ou deixe
+um `plexctl services watch` rodando em segundo plano para reerguer o que cair.
 
 ## Sobre a autoria
 
