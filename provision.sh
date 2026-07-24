@@ -12,8 +12,12 @@ set -u
 
 # Parametrizavel por variaveis de ambiente (defaults sensatos). Ex.:
 #   sudo PLEXCTL_HOME=/srv/plex PLEXCTL_USER=media ./provision.sh
-PERSIST="${PLEXCTL_HOME:-/var/www/html/plex}"
-PLEX_USER="${PLEXCTL_USER:-plex}"
+# Precedencia: variavel de ambiente > /etc/plexctl.conf (instalacao ja feita) >
+# default. Assim, re-rodar num servidor ja configurado preserva os valores dele.
+_ENV_HOME="${PLEXCTL_HOME:-}"; _ENV_USER="${PLEXCTL_USER:-}"
+[ -r /etc/plexctl.conf ] && . /etc/plexctl.conf
+PERSIST="${_ENV_HOME:-${PLEXCTL_HOME:-/var/www/html/plex}}"
+PLEX_USER="${_ENV_USER:-${PLEXCTL_USER:-plex}}"
 # UUID do tunnel: se vazio, e auto-detectado a partir de cloudflared/*.json.
 TUNNEL_UUID="${CF_TUNNEL_UUID:-}"
 
