@@ -52,8 +52,8 @@ toda parte; o que muda é como o Plex chega.
 | Família | Distros | Gerenciador | Plex | CI |
 |---|---|---|---|---|
 | Debian | Debian, Ubuntu, Mint e derivados | `apt` | repositório oficial | ✅ testado |
-| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | repositório oficial | ✅ Fedora testado |
-| SUSE | openSUSE, SLES | `zypper` | repositório oficial | — |
+| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | repositório oficial | ✅ Fedora + Alma |
+| SUSE | openSUSE, SLES | `zypper` | repositório oficial | ✅ openSUSE Leap |
 | Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ testado |
 
 Onde diz "CI testado", cada push roda o `provision.sh` em modo dry-run naquela

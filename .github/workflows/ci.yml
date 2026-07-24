@@ -41,6 +41,10 @@ jobs:
             pkg: apt-get
           - image: fedora:latest
             pkg: dnf
+          - image: almalinux:9
+            pkg: dnf
+          - image: opensuse/leap:latest
+            pkg: zypper
           - image: archlinux:latest
             pkg: pacman
     container:
@@ -53,6 +57,8 @@ jobs:
             apt-get install -y -qq python3 git
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y -q python3 git
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper -n install python3 git
           elif command -v pacman >/dev/null 2>&1; then
             pacman -Sy --noconfirm --needed archlinux-keyring
             pacman -S  --noconfirm --needed python git
