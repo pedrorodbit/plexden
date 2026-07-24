@@ -5,8 +5,11 @@ cabe num container Linux enxuto e é tocado por um único script Python. Sem
 framework, sem dependência exótica: só a biblioteca padrão do Python e alguns
 utilitários que qualquer Linux já traz.
 
-Nasceu para aqueles containers pelados, sem systemd nem cron, onde o PID 1 é
-literalmente um `bash`. Se o seu ambiente é assim, você está no lugar certo.
+Foi feito pensando no caso mais chato — aqueles containers pelados, sem systemd
+nem cron, onde o PID 1 é literalmente um `bash` e nada sobe sozinho. Ele dá conta
+disso. Mas não se limita a esse cenário: num Linux comum, com systemd, roda igual
+de bem (e aí você pode até deixar o systemd cuidar do autostart). Se o seu
+ambiente é um desses containers minimalistas, melhor ainda — é onde ele brilha.
 
 ## Instalando
 
