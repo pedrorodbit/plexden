@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -375,9 +376,10 @@ def do_watch(interval):
 
 
 def cmd_services(args):
-    require_root("services " + (args[0] if args else "status"))
-    os.makedirs(LOGDIR, exist_ok=True)
     action = args[0] if args else "status"
+    if action == "status":   # so leitura (HTTP + statvfs): dispensa root
+        return do_status()
+    require_root("services " + action)
     if action == "start":
         return do_start()
     if action == "stop":
@@ -386,8 +388,6 @@ def cmd_services(args):
         do_stop()
         time.sleep(3)
         return do_start()
-    if action == "status":
-        return do_status()
     if action == "watch":
         do_watch(int(args[1]) if len(args) > 1 else 60)
         return 0
@@ -489,6 +489,15 @@ class QB:
         code, _ = self._req(f"/api/v2/torrents/{name}", data)
         return code
 
+    def webapi_version(self):
+        """(maior, menor, ...) da Web API. Em 2.11+ (qB 5.0) pause/resume
+        viraram stop/start."""
+        try:
+            _, t = self._req("/api/v2/app/webapiVersion")
+            return tuple(int(x) for x in t.strip().split("."))
+        except Exception:
+            return (0,)
+
 
 def _fmt_size(b):
     b = float(b)
@@ -541,7 +550,11 @@ def cmd_qb(args):
         print(f"{action} em:")
         for t in rows:
             print(f"  {t['name']}")
-        code = qb.action(action, {"hashes": "|".join(t["hash"] for t in rows)})
+        # qB 5.0 (Web API 2.11) renomeou pause->stop e resume->start.
+        endpoint = action
+        if qb.webapi_version() >= (2, 11):
+            endpoint = "stop" if action == "pause" else "start"
+        code = qb.action(endpoint, {"hashes": "|".join(t["hash"] for t in rows)})
         print(f"  -> HTTP {code}")
         return 0
 
@@ -753,6 +766,18 @@ def _pkg_family(mgr):
     return None
 
 
+def _plex_build():
+    """Tag de build do Plex conforme a arquitetura (para a URL de download)."""
+    m = os.uname().machine
+    if m in ("x86_64", "amd64"):
+        return "linux-x86_64"
+    if m in ("aarch64", "arm64"):
+        return "linux-aarch64"
+    if m.startswith("armv7") or m in ("armhf", "armv6l"):
+        return "linux-armv7neon"
+    return None
+
+
 def _plex_version_installed(fam):
     if fam == "deb":
         return sh(["dpkg-query", "-W", "-f=${Version}",
@@ -816,11 +841,15 @@ def cmd_update(args):
         return 1
     print(f"   {backup} ({sh(['du','-sh',backup]).stdout.split()[0]})")
 
+    build = _plex_build()
+    if not build:
+        print(f"ERRO: arquitetura sem build do Plex: {os.uname().machine}")
+        return 1
     distro = "debian" if fam == "deb" else "redhat"
     ext = fam
     pkgfile = f"/tmp/plex-new.{ext}"
-    print(f"== Baixando .{ext} ==")
-    url = ("https://plex.tv/downloads/latest/5?channel=16&build=linux-x86_64"
+    print(f"== Baixando .{ext} ({build}) ==")
+    url = (f"https://plex.tv/downloads/latest/5?channel=16&build={build}"
            f"&distro={distro}&X-Plex-Token={token}")
     if sh(["curl", "-sL", "--max-time", "600", "-o", pkgfile, url]).returncode != 0:
         print("ERRO: download falhou")
