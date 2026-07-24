@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  # ---------------------------------------------------------------- lint ---
+  # Sintaxe de tudo, uma vez, no ambiente padrao do runner.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sintaxe dos scripts shell (bash -n)
+        run: |
+          bash -n install.sh
+          bash -n provision.sh
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -e SC1091 install.sh provision.sh
+
+      - name: Sintaxe do plexctl (Python)
+        run: python3 -c "import ast; ast.parse(open('plexctl').read())"
+
+  # ------------------------------------------------------------- distros ---
+  # Em cada familia de distro, roda 'provision.sh --check' (dry-run, sem
+  # instalar nada) e confere que o gerenciador certo foi detectado e que o
+  # plexctl compila sob o python daquela distro.
+  distros:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:stable-slim
+            pkg: apt-get
+          - image: fedora:latest
+            pkg: dnf
+          - image: archlinux:latest
+            pkg: pacman
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Dependencias minimas (python3 + git p/ o checkout)
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq python3 git
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q python3 git
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm --needed archlinux-keyring
+            pacman -S  --noconfirm --needed python git
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: provision.sh --check detecta o gerenciador certo
+        run: |
+          out=$(bash provision.sh --check)
+          echo "$out"
+          echo "$out" | grep -q "gerenciador detectado: ${{ matrix.pkg }}"
+          echo "$out" | grep -q "plexctl: sintaxe Python OK"
+
+      - name: plexctl compila sob o python desta distro
+        run: |
+          python3 -c "import ast, sys; ast.parse(open('plexctl').read()); print('plexctl OK sob Python', sys.version.split()[0])"

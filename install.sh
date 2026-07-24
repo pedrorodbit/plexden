@@ -51,8 +51,8 @@ curl -fsSL "${RAW}/credentials.env.example" -o "${PLEXCTL_HOME}/credentials.env.
 chmod +x "${PLEXCTL_HOME}/scripts/plexctl" "${PLEXCTL_HOME}/provision.sh"
 
 echo "== Provisionando (HOME=${PLEXCTL_HOME}, usuario=${PLEXCTL_USER}) =="
-PLEXCTL_HOME="${PLEXCTL_HOME}" PLEXCTL_USER="${PLEXCTL_USER}" \
-    bash "${PLEXCTL_HOME}/provision.sh"
+export PLEXCTL_HOME PLEXCTL_USER
+bash "${PLEXCTL_HOME}/provision.sh"
 
 cat <<EOF
 

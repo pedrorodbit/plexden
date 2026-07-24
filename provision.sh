@@ -21,18 +21,26 @@ PLEX_USER="${_ENV_USER:-${PLEXCTL_USER:-plex}}"
 # UUID do tunnel: se vazio, e auto-detectado a partir de cloudflared/*.json.
 TUNNEL_UUID="${CF_TUNNEL_UUID:-}"
 
+# --check: dry-run. Detecta o gerenciador, resolve a lista de pacotes e a
+# estrategia por familia, valida a sintaxe do plexctl e sai — sem instalar nada
+# nem mutar o sistema. E' o que o CI roda em cada distro.
+CHECK=0
+[ "${1:-}" = "--check" ] && CHECK=1
+
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
 fail() { echo "ERRO: $*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
-# cria o usuario da stack se ainda nao existir
-id "$PLEX_USER" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$PLEX_USER" && log "usuario $PLEX_USER criado"; }
-# Avisa se $PERSIST nao parece estar num mount dedicado (dado que so ele
-# persiste a recriacao do container). Checa o proprio dir e o pai.
-mountpoint -q "$PERSIST" 2>/dev/null || \
-  mountpoint -q "$(dirname "$PERSIST")" 2>/dev/null || \
-  grep -qF " $PERSIST " /proc/mounts || \
-  log "AVISO: $PERSIST nao aparece como mount — confirme que persiste!"
+if [ "$CHECK" = 0 ]; then
+    [ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
+    # cria o usuario da stack se ainda nao existir
+    id "$PLEX_USER" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$PLEX_USER" && log "usuario $PLEX_USER criado"; }
+    # Avisa se $PERSIST nao parece estar num mount dedicado (dado que so ele
+    # persiste a recriacao do container). Checa o proprio dir e o pai.
+    mountpoint -q "$PERSIST" 2>/dev/null || \
+      mountpoint -q "$(dirname "$PERSIST")" 2>/dev/null || \
+      grep -qF " $PERSIST " /proc/mounts || \
+      log "AVISO: $PERSIST nao aparece como mount — confirme que persiste!"
+fi
 
 # ------------------------------------------------- gerenciador de pacotes ---
 # Camada fina sobre o gerenciador da distro. So o bootstrap (este script) e o
@@ -85,7 +93,6 @@ install_if_missing() {
 log "== Pacotes =="
 detect_pkg
 log "  gerenciador detectado: $PKG"
-pkg_refresh
 
 # Nomes que variam por familia: procps -> procps-ng (rpm/arch); python3 ->
 # python (arch); gnupg so e' preciso no apt (dearmor da chave do Plex).
@@ -94,6 +101,33 @@ case "$PKG" in
     pacman)         base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python" ;;
     dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3" ;;
 esac
+
+# Dry-run: reporta o plano e valida o plexctl, sem tocar no sistema.
+if [ "$CHECK" = 1 ]; then
+    log "== MODO --check (dry-run) — nada sera instalado =="
+    log "  pacotes base: $base"
+    case "$PKG" in
+        apt-get)        log "  plex: repositorio apt assinado (distro=debian)" ;;
+        dnf|yum|zypper) log "  plex: repositorio rpm (.repo + rpm --import)" ;;
+        pacman)         log "  plex: AUR (instalacao manual)" ;;
+    esac
+    log "  cloudflared: binario estatico ($(uname -m))"
+    sdir=$(cd "$(dirname "$0")" && pwd)
+    P=""
+    [ -f "$sdir/scripts/plexctl" ] && P="$sdir/scripts/plexctl"
+    [ -z "$P" ] && [ -f "$sdir/plexctl" ] && P="$sdir/plexctl"
+    if [ -n "$P" ] && command -v python3 >/dev/null 2>&1; then
+        python3 - "$P" <<'PY' && log "  plexctl: sintaxe Python OK"
+import ast, sys
+ast.parse(open(sys.argv[1]).read())
+PY
+    else
+        log "  (plexctl ou python3 ausente — pulei a checagem de sintaxe)"
+    fi
+    exit 0
+fi
+
+pkg_refresh
 for p in $base; do
     install_if_missing "$p"
 done
@@ -235,7 +269,7 @@ fi
 log "== Cloudflare Tunnel =="
 # Se o UUID nao veio por env, auto-detecta pelo unico *.json em cloudflared/.
 if [ -z "$TUNNEL_UUID" ]; then
-    j=$(ls "$PERSIST"/cloudflared/*.json 2>/dev/null | head -1)
+    j=$(find "$PERSIST"/cloudflared -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
     [ -n "$j" ] && TUNNEL_UUID=$(basename "$j" .json)
 fi
 if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] && [ -f "$PERSIST/cloudflared/$TUNNEL_UUID.json" ]; then
