@@ -1,6 +1,6 @@
-# plexctl
+# plexden
 
-[![CI](https://github.com/pedrorodbit/plexctl/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrorodbit/plexctl/actions/workflows/ci.yml)
+[![CI](https://github.com/pedrorodbit/plexden/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrorodbit/plexden/actions/workflows/ci.yml)
 
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
 roda em qualquer Linux e é tocado por um único script Python. Sem framework, sem
@@ -11,7 +11,7 @@ Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde 
 PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
 container minimalista, por exemplo). Ele dá conta disso. Mas não se limita a esse
 cenário: num Linux comum, com systemd, também roda de boa — e aí você pode deixar
-o systemd cuidar do autostart. O `plexctl services` gerencia os três serviços em
+o systemd cuidar do autostart. O `plexden services` gerencia os três serviços em
 qualquer caso — inclusive o cloudflared, detectando sozinho se ele roda via
 systemd ou SysV.
 
@@ -20,10 +20,10 @@ systemd ou SysV.
 Numa máquina nova, como root, uma linha resolve:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh | sudo bash
 ```
 
-> **Sobre distros:** o instalador (e o `plexctl update`) detecta sozinho o seu
+> **Sobre distros:** o instalador (e o `plexden update`) detecta sozinho o seu
 > gerenciador de pacotes — `apt`, `dnf`/`yum`, `pacman` ou `zypper` — e segue a
 > partir daí. O Plex tem repositório oficial nas famílias Debian e RPM; no Arch
 > não há pacote oficial, então o instalador te aponta para o AUR e cuida do
@@ -32,20 +32,20 @@ curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh
 Prefere outro caminho ou outro usuário? É só passar por variável de ambiente:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexctl/main/install.sh \
-  | sudo PLEXCTL_HOME=/srv/plex PLEXCTL_USER=media bash
+curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh \
+  | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
 ```
 
-O instalador baixa o `plexctl` e o `provision.sh`, puxa as dependências
+O instalador baixa o `plexden` e o `provision.sh`, puxa as dependências
 (`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
 pastas e sobe o que consegue. No fim, ele te mostra o que falta fazer à mão —
 que são justamente as coisas que **não** cabem num repositório público.
 
 ## Distros suportadas
 
-O `plexctl` é escrito só com a biblioteca padrão do Python, então roda em
+O `plexden` é escrito só com a biblioteca padrão do Python, então roda em
 qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação** (o
-`provision.sh`) e o **`plexctl update`** — e esses detectam o gerenciador
+`provision.sh`) e o **`plexden update`** — e esses detectam o gerenciador
 sozinhos. Os pacotes base e o `cloudflared` (binário estático) são iguais em
 toda parte; o que muda é como o Plex chega.
 
@@ -57,7 +57,7 @@ toda parte; o que muda é como o Plex chega.
 | Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ testado |
 
 Onde diz "CI testado", cada push roda o `provision.sh` em modo dry-run naquela
-distro e confere que o gerenciador certo foi detectado e que o `plexctl` compila
+distro e confere que o gerenciador certo foi detectado e que o `plexden` compila
 sob o Python de lá — é o que o badge de CI lá no topo reflete. Ainda é validação
 de detecção e sintaxe, não uma instalação completa em VM; o resto é exercitado à
 mão.
@@ -66,7 +66,7 @@ Duas ressalvas honestas:
 
 - **Arch** — o Plex não tem pacote oficial. O instalador prepara tudo e te manda
   instalar pelo AUR (ex.: `yay -S plex-media-server`); depois é só rodar o
-  `provision.sh` de novo. O `plexctl update`, no Arch, também aponta pro AUR em
+  `provision.sh` de novo. O `plexden update`, no Arch, também aponta pro AUR em
   vez de baixar `.deb`/`.rpm`.
 - **Fedora/RHEL** — se o SELinux estiver em *enforcing*, ele pode barrar o Plex
   de seguir os hardlinks da biblioteca ou de varrer pastas fora do lugar
@@ -83,26 +83,26 @@ O que você faz depois de instalar:
 
 1. **qBittorrent** — copie o modelo e ponha sua senha:
    ```bash
-   cp $PLEXCTL_HOME/credentials.env.example $PLEXCTL_HOME/credentials.env
-   chmod 600 $PLEXCTL_HOME/credentials.env   # edite QB_USER / QB_PASS
-   sudo $PLEXCTL_HOME/provision.sh           # regenera ~/.qbcreds e a senha da WebUI
+   cp $PLEXDEN_HOME/credentials.env.example $PLEXDEN_HOME/credentials.env
+   chmod 600 $PLEXDEN_HOME/credentials.env   # edite QB_USER / QB_PASS
+   sudo $PLEXDEN_HOME/provision.sh           # regenera ~/.qbcreds e a senha da WebUI
    ```
 2. **Plex** — um servidor recém-instalado nasce "não reivindicado". Pegue um token
    em [plex.tv/claim](https://plex.tv/claim) (ele expira em 4 minutos) e:
    ```bash
    curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
-   sudo plexctl services restart
+   sudo plexden services restart
    ```
 3. **Cloudflare Tunnel** (opcional) — jogue suas credenciais em
-   `$PLEXCTL_HOME/cloudflared/` e rode o `provision.sh` de novo.
+   `$PLEXDEN_HOME/cloudflared/` e rode o `provision.sh` de novo.
 
 ## O dia a dia
 
 ```bash
-sudo plexctl services {start|stop|restart|status|watch [segundos]}
-plexctl qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
-plexctl postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
-sudo plexctl update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
+sudo plexden services {start|stop|restart|status|watch [segundos]}
+plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
+plexden postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
+sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
 ```
 
 O que cada um faz:
@@ -124,36 +124,36 @@ O que cada um faz:
 
 ## Ajustando ao seu setup
 
-O `plexctl` procura configuração nesta ordem: variável de ambiente →
-`/etc/plexctl.conf` → um default razoável.
+O `plexden` procura configuração nesta ordem: variável de ambiente →
+`/etc/plexden.conf` → um default razoável.
 
 | Variável | Default | Para quê |
 |---|---|---|
-| `PLEXCTL_HOME` | `/srv/plexctl` | onde a stack vive (de preferência, um volume que persista) |
-| `PLEXCTL_USER` | `plex` | usuário que roda os serviços |
+| `PLEXDEN_HOME` | `/srv/plexden` | onde a stack vive (de preferência, um volume que persista) |
+| `PLEXDEN_USER` | `plex` | usuário que roda os serviços |
 | `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se em branco, ele acha sozinho pelo `*.json` em `cloudflared/` |
 
-O `provision.sh` grava esses valores em `/etc/plexctl.conf` — então, se você
+O `provision.sh` grava esses valores em `/etc/plexden.conf` — então, se você
 rodar de novo mais tarde, ele lembra do que você escolheu.
 
 ## Como as peças se encaixam
 
-Tudo mora em `$PLEXCTL_HOME`, que de preferência fica num volume que persiste —
+Tudo mora em `$PLEXDEN_HOME`, que de preferência fica num volume que persiste —
 assim você reinstala (ou recria o container, se for o caso) sem levar seus dados
 junto. Nos lugares onde algo externo espera um caminho fixo, deixamos um stub de
-uma linha que só chama o `plexctl`:
+uma linha que só chama o `plexden`:
 
 | Arquivo | Chama |
 |---|---|
-| `/etc/init.d/plexmediaserver` | `plexctl _init "$@"` |
-| `/usr/local/bin/plex-stack-start` | `plexctl services start` (bom para o entrypoint) |
-| `~/bin/plex-start` | `plexctl plex-exec` |
-| AutoRun no `qBittorrent.conf` | `plexctl postprocess "%N" "%F"` |
+| `/etc/init.d/plexmediaserver` | `plexden _init "$@"` |
+| `/usr/local/bin/plex-stack-start` | `plexden services start` (bom para o entrypoint) |
+| `~/bin/plex-start` | `plexden plex-exec` |
+| AutoRun no `qBittorrent.conf` | `plexden postprocess "%N" "%F"` |
 
 Só um lembrete: num sistema sem init, **nada sobe sozinho** (lembra do PID 1 =
-bash?). Para autostart, chame `plexctl services start` no boot — um serviço
+bash?). Para autostart, chame `plexden services start` no boot — um serviço
 systemd, o entrypoint do container, o que fizer sentido no seu setup — ou deixe
-um `plexctl services watch` rodando em segundo plano para reerguer o que cair.
+um `plexden services watch` rodando em segundo plano para reerguer o que cair.
 
 ## Sobre a autoria
 
