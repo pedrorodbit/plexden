@@ -2,14 +2,16 @@
 
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
 roda em qualquer Linux e é tocado por um único script Python. Sem framework, sem
-dependência exótica: só a biblioteca padrão do Python e alguns utilitários que
-qualquer Linux já traz.
+dependência exótica: só a biblioteca padrão do Python e utilitários comuns de
+linha de comando (`curl`, `pgrep`, `su` e afins).
 
 Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde o
 PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
 container minimalista, por exemplo). Ele dá conta disso. Mas não se limita a esse
-cenário: num Linux comum, com systemd, roda igual de bem — e aí você pode até
-deixar o systemd cuidar do autostart.
+cenário: num Linux comum, com systemd, também roda de boa — e aí você pode deixar
+o systemd cuidar do autostart. (A gerência de Plex e qBittorrent é a mesma em
+qualquer caso; só o cloudflared, num host com systemd, você acompanha pelo
+`systemctl` em vez do `plexctl`.)
 
 ## Instalando
 
