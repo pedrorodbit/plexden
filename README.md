@@ -221,6 +221,11 @@ O que cada um faz:
   travado é derrubado e reerguido em vez de fingir que está tudo bem.
 - **`qb`** — conversa com a WebUI do qBittorrent (login por usuário/senha guardado
   em `~/.qbcreds`). Listar, pausar, retomar, mover — sem abrir o navegador.
+  A busca de `pause`/`resume` é por **trecho do nome**, então um termo curto pega
+  vários torrents de uma vez. Por isso o comando lista o que vai atingir, com
+  estado e progresso de cada um, e repete o total no fim — se aparecer algo
+  `stalledUP 100%` na lista, você está prestes a mexer num torrent que já estava
+  completo e semeando.
 - **`postprocess`** — quando um download termina, decide se é filme ou série e
   cria um **hardlink** na biblioteca (sem duplicar espaço, e o torrent continua
   semeando do arquivo original). Uma ressalva que importa: hardlink não cruza

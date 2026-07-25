@@ -155,7 +155,16 @@ su - "$PLEX_USER" -c 'qbittorrent-nox --version' 2>/dev/null | tail -1 | sed 's/
 echo "  Web API $api -> endpoints $endp"
 echo "  estado inicial: $(state)"
 
-su - "$PLEX_USER" -c 'plexden qb pause'
+# A saida precisa dizer quantos e em que estado — e o que evita uma busca larga
+# atingir torrent completo sem ninguem perceber.
+saida=$(su - "$PLEX_USER" -c 'plexden qb pause')
+printf '    %s\n' "$saida"
+echo "$saida" | grep -qE 'pause em [0-9]+ torrent' \
+    || fail "o cabecalho de 'qb pause' nao diz quantos torrents"
+echo "$saida" | grep -qE '\([0-9]+ torrent\(s\) afetados\)' \
+    || fail "o total nao aparece no fim da saida de 'qb pause'"
+echo "$saida" | grep -qE '^  [a-zA-Z]+ +[0-9.]+% ' \
+    || fail "'qb pause' nao mostra estado e progresso de cada torrent"
 for _ in $(seq 1 20); do
     case "$(state)" in stopped*|paused*) break ;; esac; sleep 1
 done

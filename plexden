@@ -605,15 +605,21 @@ def cmd_qb(args):
         if not rows:
             print(f'nenhum torrent casa com "{term}"' if term else "nenhum torrent")
             return 0
-        print(f"{action} em:")
+        # O termo e' substring: uma busca larga pega mais torrent do que se
+        # espera. Mostrar estado e progresso de cada um faz o estrago aparecer
+        # antes de acontecer — um "stalledUP 100%" nesta lista quer dizer que a
+        # busca alcancou algo que ja estava completo e semeando.
+        print(f"{action} em {len(rows)} torrent(s):")
         for t in rows:
-            print(f"  {t['name']}")
+            print(f"  {t['state']:<12} {t['progress']*100:5.1f}%  {t['name'][:58]}")
         # qB 5.0 (Web API 2.11) renomeou pause->stop e resume->start.
         endpoint = action
         if qb.webapi_version() >= (2, 11):
             endpoint = "stop" if action == "pause" else "start"
         code = qb.action(endpoint, {"hashes": "|".join(t["hash"] for t in rows)})
-        print(f"  -> HTTP {code}")
+        # O total repetido no fim, e nao so no cabecalho: quem le saida longa
+        # corta o comeco, nao o fim.
+        print(f"  -> HTTP {code}  ({len(rows)} torrent(s) afetados)")
         if not 200 <= code < 300:
             # Sem isto um 404 (endpoint errado para a versao do qB) passava por
             # sucesso, e o torrent seguia rodando sem ninguem notar.
