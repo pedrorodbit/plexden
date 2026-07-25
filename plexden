@@ -12,6 +12,7 @@ pacote via pip).
   plexden services status                                     (dispensa root)
   plexden qb {list|paths|pause|resume|setlocation} ...
   plexden postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
+  plexden links [--apply]                                     (limpa a biblioteca)
   plexden update                                              (root)
   plexden plex-exec                                           (entrypoint do Plex)
   plexden _init {start|stop|status|restart}                  (stub SysV)
@@ -68,6 +69,7 @@ WATCHLOG = os.path.join(LOGDIR, "watchdog.log")
 AUTORUN_LOG = os.path.join(LOGDIR, "autorun.log")
 PREFS = os.path.join(PERSIST, "config", "Plex Media Server", "Preferences.xml")
 SCRIPTS_DIR = os.path.join(PERSIST, "scripts")
+LINKS_DB = os.path.join(PERSIST, "config", "links.json")
 
 PLEX_URL = "http://127.0.0.1:32400"
 QB_URL = os.environ.get("QB_HOST", "http://127.0.0.1:8081")
@@ -685,21 +687,69 @@ def _size_mb(path):
         return 0
 
 
-def _hardlink(src, dst):
+# Razao dos links que o postprocess criou: destino na biblioteca -> origem no
+# torrents/. Existe para responder uma pergunta so: "este arquivo da biblioteca
+# veio de qual torrent?".
+#
+# Sem a razao, o unico sinal disponivel seria st_nlink == 1 ("mais ninguem
+# aponta para este dado"). So que isso tambem descreve toda a midia que a pessoa
+# copiou para a biblioteca por fora do plexden — apagar por esse criterio
+# destruiria acervo que o plexden nunca tocou. Dai o registro explicito: o
+# 'plexden links' so mexe no que esta aqui dentro.
+def _links_load():
+    try:
+        with open(LINKS_DB) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    links = data.get("links") if isinstance(data, dict) else None
+    return links if isinstance(links, dict) else {}
+
+
+def _links_save(links):
+    os.makedirs(os.path.dirname(LINKS_DB), exist_ok=True)
+    tmp = LINKS_DB + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"version": 1, "links": links}, f,
+                  ensure_ascii=False, indent=1, sort_keys=True)
+    # Troca atomica: uma queda no meio da escrita nunca deixa a razao truncada,
+    # que e o unico jeito de o plexden "esquecer" a procedencia de um arquivo.
+    os.replace(tmp, LINKS_DB)
+
+
+def _links_merge(novos):
+    if not novos:
+        return
+    links = _links_load()
+    links.update(novos)
+    try:
+        _links_save(links)
+    except OSError as e:
+        # O postprocess ja criou os hardlinks a esta altura. Morrer aqui por
+        # causa da razao seria trocar "midia organizada, procedencia perdida"
+        # por "traceback no AutoRun do qB". O aviso vai para o log e a midia
+        # fica — so nao entra na conta do 'plexden links'.
+        _autolog(f"  AVISO: nao consegui gravar a razao ({LINKS_DB}): {e}")
+
+
+def _hardlink(src, dst, ledger=None):
     """True se o arquivo passou a existir no destino agora.
 
     O contador do postprocess depende disso: antes ele somava tambem os
     arquivos pulados e os que falharam, e anunciava "N arquivos linkados"
     para N que nao tinham sido linkados.
+
+    Quando 'ledger' e um dict, o par destino->origem e anotado nele para o
+    chamador gravar na razao de uma vez so (ver _links_merge).
     """
     if os.path.exists(dst):
         _autolog(f"  ja existe, pulando: {dst}")
         return False
     os.makedirs(os.path.dirname(dst), exist_ok=True)
+    modo = "link"
     try:
         os.link(src, dst)
         _autolog(f"  link: {dst}")
-        return True
     except OSError:
         # Hardlink nao cruza sistema de arquivos. Se torrents/ e a biblioteca
         # estao em discos diferentes, copiar e o unico caminho — e ai o espaco
@@ -707,10 +757,14 @@ def _hardlink(src, dst):
         try:
             shutil.copy2(src, dst)
             _autolog(f"  COPIA (hardlink impossivel, espaco duplicado): {dst}")
-            return True
+            modo = "copia"
         except OSError:
             _autolog(f"  ERRO ao linkar: {src}")
             return False
+    if ledger is not None:
+        ledger[dst] = {"src": src, "modo": modo,
+                       "tamanho": _size_mb(dst), "em": now()}
+    return True
 
 
 def _walk_files(content):
@@ -770,19 +824,22 @@ def cmd_postprocess(args):
     _autolog(f"  tipo detectado: {kind}")
 
     linked = 0
+    novos = {}          # o que entrar aqui vai para a razao no fim
     if kind == "movie":
         for vid in vids:
             if _size_mb(vid) < MIN_VIDEO_MB:
                 _autolog(f"  ignora video pequeno ({_size_mb(vid)}MB): "
                          f"{os.path.basename(vid)}")
                 continue
-            if _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid))):
+            if _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid)),
+                         novos):
                 linked += 1
             base = vid.rsplit(".", 1)[0]
             for ext in SUB_EXT:
                 sub = f"{base}.{ext}"
                 if os.path.exists(sub):
-                    _hardlink(sub, os.path.join(MOVIES, os.path.basename(sub)))
+                    _hardlink(sub, os.path.join(MOVIES, os.path.basename(sub)),
+                              novos)
         scan_dir = MOVIES
     else:
         fallback = os.path.join(SERIES, _clean_show(name))
@@ -801,15 +858,126 @@ def cmd_postprocess(args):
             else:
                 _autolog(f"  sem temporada no nome, usando fallback: {fname}")
                 dst = os.path.join(fallback, fname)
-            if _hardlink(f, dst):
+            if _hardlink(f, dst, novos):
                 linked += 1
         scan_dir = SERIES
 
+    _links_merge(novos)
     _autolog(f"  arquivos linkados: {linked}")
     _trigger_scan(scan_dir)
     _autolog(f"=== fim: '{name}' ({kind}, {linked} arquivos)")
     print(f"ok: {name} -> {kind} ({linked} arquivos linkados)")
     return 0
+
+
+# ============================================================ LINKS ===========
+def _sob(path, raiz):
+    """True se 'path' esta dentro de 'raiz'."""
+    raiz = os.path.join(os.path.realpath(raiz), "")
+    return os.path.realpath(path).startswith(raiz)
+
+
+def _poda_vazios(path, raizes):
+    """Sobe removendo diretorios que ficaram vazios, sem passar das raizes.
+
+    Sem isso, apagar a ultima temporada de uma serie deixa
+    'series/Nome/Season 04/' vazio na biblioteca — e o Plex mantem a serie
+    listada, sem episodio nenhum dentro.
+    """
+    d = os.path.dirname(path)
+    while any(_sob(d, r) for r in raizes):
+        try:
+            os.rmdir(d)                 # falha de proposito se nao estiver vazio
+        except OSError:
+            return
+        d = os.path.dirname(d)
+
+
+def cmd_links(args):
+    """Reconcilia a biblioteca com o torrents/: fonte apagada, link vai junto.
+
+    O gatilho e apagar o download — por espaco, por desinteresse, ou porque o
+    qBittorrent removeu o torrent com os arquivos. A biblioteca acompanha.
+    """
+    aplica = "--apply" in args
+    links = _links_load()
+    print(f"razao: {LINKS_DB}")
+    if not links:
+        print("  (vazia — nada registrado ainda)")
+        print("\nSo entra na razao o que o 'plexden postprocess' linkar daqui")
+        print("pra frente. O que ja estava na biblioteca nunca e' tocado.")
+        return 0
+
+    em_dia, sumidos, orfaos, fora = 0, [], [], []
+    for dst in sorted(links):
+        src = links[dst].get("src") or ""
+        if src and os.path.exists(src):
+            em_dia += 1
+        elif not os.path.exists(dst):
+            # Acordado: o destino ja nao esta onde foi registrado (renomeado ou
+            # apagado a mao). Nao saimos cacando o arquivo — so limpamos a razao.
+            sumidos.append(dst)
+        elif not (_sob(dst, MOVIES) or _sob(dst, SERIES)):
+            # Razao adulterada ou PLEXDEN_HOME trocado depois do registro. Nao
+            # removemos nada fora da biblioteca, em hipotese nenhuma.
+            fora.append(dst)
+        else:
+            orfaos.append(dst)
+
+    print(f"  em dia (fonte presente):        {em_dia:4d}")
+    print(f"  fonte apagada -> link vai junto:{len(orfaos):4d}")
+    print(f"  destino ja nao existe:          {len(sumidos):4d}")
+    if fora:
+        print(f"  fora da biblioteca (IGNORADO):  {len(fora):4d}")
+        for dst in fora:
+            print(f"    {dst}")
+
+    if orfaos:
+        print("\nfonte apagada:")
+        for dst in orfaos:
+            rec = links[dst]
+            aviso = "  [COPIA: o dado so existe aqui]" \
+                if rec.get("modo") == "copia" else ""
+            print(f"  {dst}{aviso}")
+            print(f"      fonte: {rec.get('src')}")
+
+    if not aplica:
+        if orfaos or sumidos:
+            print("\nnada foi removido — 'plexden links --apply' aplica")
+        return 0
+
+    raizes = (MOVIES, SERIES)
+    removidos, falhas, tocou = 0, 0, set()
+    for dst in orfaos:
+        try:
+            os.remove(dst)
+        except OSError as e:
+            print(f"  ERRO ao remover {dst}: {e}")
+            falhas += 1
+            continue
+        _poda_vazios(dst, raizes)
+        tocou.add(MOVIES if _sob(dst, MOVIES) else SERIES)
+        del links[dst]
+        removidos += 1
+    for dst in sumidos:
+        del links[dst]
+    try:
+        _links_save(links)
+    except OSError as e:
+        # Aqui a razao ficou atrasada em relacao ao disco: os arquivos ja
+        # sairam. Reclamar alto e melhor do que a proxima execucao reencontrar
+        # entradas cujo destino "sumiu" e nao saber por que.
+        print(f"\nERRO: os links foram removidos mas a razao nao pode ser "
+              f"gravada ({LINKS_DB}): {e}")
+        return 1
+
+    print(f"\nremovidos {removidos} link(s), "
+          f"{len(sumidos)} entrada(s) obsoleta(s) limpa(s) da razao")
+    # Sem o rescan o Plex segue exibindo o item, e clicar nele da erro.
+    for raiz in sorted(tocou):
+        _trigger_scan(raiz)
+        print(f"  rescan pedido: {raiz}")
+    return 1 if falhas else 0
 
 
 # ============================================================ UPDATE ==========
@@ -1005,6 +1173,7 @@ USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
   plexden services status                                     (dispensa root)
   plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
   plexden postprocess "<nome>" "<caminho>"
+  plexden links [--apply]      fonte do torrent apagada -> remove o hardlink
   plexden update                                              (root)
   plexden plex-exec
   plexden _init {start|stop|restart|status}
@@ -1020,6 +1189,7 @@ def main(argv):
         "services": cmd_services,
         "qb": cmd_qb,
         "postprocess": cmd_postprocess,
+        "links": cmd_links,
         "update": cmd_update,
         "plex-exec": cmd_plex_exec,
         "_init": cmd_init,

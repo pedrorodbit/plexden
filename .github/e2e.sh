@@ -202,6 +202,48 @@ su - "$PLEX_USER" -c "plexden postprocess 'Blade.Runner.2049.2017.1080p' '$C/Bla
 echo "  hardlink confirmado (nlink 2)"
 
 # --------------------------------------------------------------------------
+# O download pode sumir a qualquer momento — por espaco, por desinteresse, ou
+# porque o qBittorrent removeu o torrent com os arquivos. Sem esta limpeza o
+# Plex segue anunciando um item que da erro ao abrir.
+log "links: fonte apagada -> o hardlink vai junto"
+FILME="$PERSIST/movies/Blade.Runner.2049.2017.1080p.mkv"
+EP="$PERSIST/series/The Office/Season 04/The.Office.S04E01.1080p.WEB.mkv"
+# Midia colocada na biblioteca por fora do plexden: nlink 1, fonte nenhuma.
+# E o perfil que o criterio ingenuo (st_nlink == 1) apagaria por engano.
+ALHEIO="$PERSIST/movies/Filme Que Ninguem Linkou.mkv"
+dd if=/dev/zero of="$ALHEIO" bs=1M count=120 status=none
+chown "$PLEX_USER:$PLEX_USER" "$ALHEIO"
+[ "$(stat -c %h "$ALHEIO")" = 1 ] || fail "o arquivo alheio deveria ter nlink 1"
+
+su - "$PLEX_USER" -c 'plexden links' | sed 's/^/    /'
+rm -f "$C/Blade.Runner.2049.2017.1080p.mkv"          # a fonte some
+saida=$(su - "$PLEX_USER" -c 'plexden links')
+printf '    %s\n' "$saida"
+echo "$saida" | grep -q 'nada foi removido' || fail "'plexden links' sem --apply removeu"
+[ -f "$FILME" ] || fail "'plexden links' removeu sem --apply"
+
+saida=$(su - "$PLEX_USER" -c 'plexden links --apply')
+printf '    %s\n' "$saida"
+echo "$saida" | grep -q 'removidos 1 link(s)' || fail "--apply nao removeu o orfao"
+# '! [ ] || fail' e nao '[ ] && fail': sob 'set -e' um teste que devolve 1 no
+# fim de uma lista derruba o script sem passar pelo fail() — e o job morreria
+# sem dizer o motivo justo quando o codigo esta certo.
+! [ -f "$FILME" ] || fail "o hardlink orfao continua na biblioteca"
+[ -f "$EP" ]     || fail "removeu o episodio, cuja fonte continua no torrents/"
+[ -f "$ALHEIO" ] || fail "apagou midia que o plexden nunca linkou"
+echo "  orfao removido, fonte viva preservada, arquivo alheio intacto"
+
+# Apagar a ultima fonte da temporada tem de levar 'Season 04/' junto, senao o
+# Plex mantem a serie listada e vazia.
+rm -f "$C/The.Office.S04E01.1080p.WEB.mkv"
+su - "$PLEX_USER" -c 'plexden links --apply' | sed 's/^/    /'
+! [ -e "$PERSIST/series/The Office" ] || fail "'The Office/' vazia sobrou na biblioteca"
+[ -d "$PERSIST/series" ] || fail "a poda comeu a raiz series/"
+[ -d "$PERSIST/movies" ] || fail "a poda comeu a raiz movies/"
+rm -f "$ALHEIO"
+echo "  temporada vazia podada, raizes da biblioteca preservadas"
+
+# --------------------------------------------------------------------------
 log "Ciclo de vida dos servicos"
 plexden services stop
 plexden services start
