@@ -8,7 +8,8 @@ plex-start, plexmediaserver.init, qb-cli, qb-postprocess, update-plex) por um
 unico dispatcher com subcomandos. So depende da stdlib do Python 3 (nenhum
 pacote via pip).
 
-  plexden services {start|stop|restart|status|watch [segs]}   (root)
+  plexden services {start|stop|restart|watch [segs]}          (root)
+  plexden services status                                     (dispensa root)
   plexden qb {list|paths|pause|resume|setlocation} ...
   plexden postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
   plexden update                                              (root)
@@ -104,10 +105,18 @@ def current_user():
 
 
 def sh(cmd, **kw):
-    """Executa comando (lista ou string) e devolve CompletedProcess."""
+    """Executa comando (lista ou string) e devolve CompletedProcess.
+
+    Binario ausente vira returncode 127 (a convencao do shell para 'command not
+    found') em vez de FileNotFoundError. Sem isso, uma stack meio instalada
+    derruba o plexden com traceback no lugar de uma mensagem util.
+    """
     shell = isinstance(cmd, str)
-    return subprocess.run(cmd, shell=shell, text=True,
-                          capture_output=True, **kw)
+    try:
+        return subprocess.run(cmd, shell=shell, text=True,
+                              capture_output=True, **kw)
+    except (FileNotFoundError, PermissionError) as e:
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
 
 
 def http_code(url, timeout=5):
@@ -296,6 +305,12 @@ def start_plex():
     if plex_ok():
         print("  Plex         ja no ar")
         return True
+    # Processo vivo mas sem responder HTTP = travado. Antes daqui, o
+    # plex_process_start() via o pid, dizia "ja rodando" e devolvia sucesso —
+    # o watchdog entao repetia "Plex caiu" para sempre sem nunca reerguer nada.
+    if _plex_running_pid():
+        print("  Plex         travado (processo vivo, HTTP mudo) — derrubando")
+        plex_process_stop()
     return plex_process_start()
 
 
@@ -400,7 +415,10 @@ def do_watch(interval):
         if not qbit_ok():
             log("qBittorrent caiu — reerguendo")
             start_qbit()
-        if not cf_ok():
+        # Sem o cf_configured() isto registrava "cloudflared caiu" a cada
+        # intervalo, para sempre, em toda instalacao sem tunnel — enchendo o log
+        # com uma afirmacao falsa sobre um servico que nunca esteve no ar.
+        if cf_configured() and not cf_ok():
             log("cloudflared caiu — reerguendo")
             start_cf()
         time.sleep(interval)
@@ -422,7 +440,8 @@ def cmd_services(args):
     if action == "watch":
         do_watch(int(args[1]) if len(args) > 1 else 60)
         return 0
-    print("Uso: plexden services {start|stop|restart|status|watch [segundos]}")
+    print("Uso: plexden services {start|stop|restart|watch [segundos]} (root)\n"
+          "     plexden services status                          (dispensa root)")
     return 1
 
 
@@ -595,7 +614,7 @@ def cmd_qb(args):
             endpoint = "stop" if action == "pause" else "start"
         code = qb.action(endpoint, {"hashes": "|".join(t["hash"] for t in rows)})
         print(f"  -> HTTP {code}")
-        if code != 200:
+        if not 200 <= code < 300:
             # Sem isto um 404 (endpoint errado para a versao do qB) passava por
             # sucesso, e o torrent seguia rodando sem ninguem notar.
             print(f"  ERRO: {endpoint} nao foi aceito pela Web API")
@@ -618,7 +637,9 @@ def cmd_qb(args):
                409: "ERRO 409: destino invalido ou inacessivel"}.get(
                    code, f"HTTP {code}")
         print(msg)
-        return 0
+        # Imprimia "ERRO 403" e saia com 0: quem chamasse por script nao tinha
+        # como saber que o move nao aconteceu.
+        return 0 if 200 <= code < 300 else 1
 
     print("Uso: plexden qb {list|paths|setlocation <destino> [hash]|"
           "pause [busca]|resume [busca]}")
@@ -659,19 +680,31 @@ def _size_mb(path):
 
 
 def _hardlink(src, dst):
+    """True se o arquivo passou a existir no destino agora.
+
+    O contador do postprocess depende disso: antes ele somava tambem os
+    arquivos pulados e os que falharam, e anunciava "N arquivos linkados"
+    para N que nao tinham sido linkados.
+    """
     if os.path.exists(dst):
         _autolog(f"  ja existe, pulando: {dst}")
-        return
+        return False
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     try:
         os.link(src, dst)
         _autolog(f"  link: {dst}")
+        return True
     except OSError:
+        # Hardlink nao cruza sistema de arquivos. Se torrents/ e a biblioteca
+        # estao em discos diferentes, copiar e o unico caminho — e ai o espaco
+        # e realmente duplicado.
         try:
             shutil.copy2(src, dst)
-            _autolog(f"  copia (ln falhou): {dst}")
+            _autolog(f"  COPIA (hardlink impossivel, espaco duplicado): {dst}")
+            return True
         except OSError:
             _autolog(f"  ERRO ao linkar: {src}")
+            return False
 
 
 def _walk_files(content):
@@ -737,8 +770,8 @@ def cmd_postprocess(args):
                 _autolog(f"  ignora video pequeno ({_size_mb(vid)}MB): "
                          f"{os.path.basename(vid)}")
                 continue
-            _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid)))
-            linked += 1
+            if _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid))):
+                linked += 1
             base = vid.rsplit(".", 1)[0]
             for ext in SUB_EXT:
                 sub = f"{base}.{ext}"
@@ -762,8 +795,8 @@ def cmd_postprocess(args):
             else:
                 _autolog(f"  sem temporada no nome, usando fallback: {fname}")
                 dst = os.path.join(fallback, fname)
-            _hardlink(f, dst)
-            linked += 1
+            if _hardlink(f, dst):
+                linked += 1
         scan_dir = SERIES
 
     _autolog(f"  arquivos linkados: {linked}")
@@ -844,18 +877,25 @@ def _plex_version_file(fam, path):
 
 
 def _plex_install_file(mgr, fam, path):
+    """True se o pacote entrou. O codigo de saida importa: sem ele o update
+    seguia adiante e anunciava 'Pronto' com o Plex parado e nao atualizado."""
     if fam == "deb":
-        if sh(f"DEBIAN_FRONTEND=noninteractive dpkg -i {path}").returncode != 0:
-            sh(["apt-get", "-f", "install", "-y"])
-    elif fam == "rpm":
+        r = sh(f"DEBIAN_FRONTEND=noninteractive dpkg -i {path}")
+        if r.returncode != 0:
+            # dpkg falha por dependencia faltando; o apt-get -f resolve.
+            r = sh(["apt-get", "-f", "install", "-y"])
+        return r.returncode == 0
+    if fam == "rpm":
         if mgr == "dnf":
-            sh(["dnf", "install", "-y", path])
+            r = sh(["dnf", "install", "-y", path])
         elif mgr == "yum":
-            sh(["yum", "install", "-y", path])
+            r = sh(["yum", "install", "-y", path])
         elif mgr == "zypper":
-            sh(["zypper", "-n", "install", "--allow-unsigned-rpm", path])
+            r = sh(["zypper", "-n", "install", "--allow-unsigned-rpm", path])
         else:
-            sh(["rpm", "-Uvh", path])
+            r = sh(["rpm", "-Uvh", path])
+        return r.returncode == 0
+    return False
 
 
 def cmd_update(args):
@@ -920,14 +960,23 @@ def cmd_update(args):
     print("== Parando Plex ==")
     plex_process_stop()
     print(f"== Instalando {newver} ==")
-    _plex_install_file(mgr, fam, pkgfile)
+    ok = _plex_install_file(mgr, fam, pkgfile)
     print("== Restaurando stub do init (o pacote o remove) ==")
     ensure_init_stub()
     print("== Iniciando ==")
     plex_process_start()
 
     print("== Verificacao ==")
-    print("   versao:", _plex_version_installed(fam))
+    instalada = _plex_version_installed(fam)
+    print("   versao:", instalada)
+    if not ok or instalada != newver:
+        # O Plex acabou de ser parado; falhar em silencio aqui deixa o usuario
+        # com o servidor fora do ar e uma mensagem de sucesso na tela.
+        print(f"\nERRO: a instalacao de {newver} nao completou "
+              f"(instalada: {instalada or 'nenhuma'}).")
+        print(f"      O banco anterior esta intacto em {backup}")
+        _rm(pkgfile)
+        return 1
     ident = http_get(f"{PLEX_URL}/identity", timeout=10)
     cm = re.search(r'claimed="[01]"', ident)
     if cm:
@@ -940,7 +989,8 @@ def cmd_update(args):
 # ============================================================ DISPATCH ========
 USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
 
-  plexden services {start|stop|restart|status|watch [segs]}   (root)
+  plexden services {start|stop|restart|watch [segs]}          (root)
+  plexden services status                                     (dispensa root)
   plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
   plexden postprocess "<nome>" "<caminho>"
   plexden update                                              (root)
