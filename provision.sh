@@ -289,7 +289,7 @@ done
 
 # Sem estes, a stack falha de um jeito silencioso e dificil de diagnosticar: os
 # servicos sobem com 'su' e a saude e' medida com HTTP. Melhor parar aqui.
-for c in su curl pgrep; do
+for c in su curl pgrep pkill; do
     command -v "$c" >/dev/null 2>&1 || \
       fail "'$c' nao existe mesmo apos instalar os pacotes base — abortando"
 done

@@ -227,14 +227,21 @@ O que cada um faz:
   sistema de arquivos, então se `torrents/` e a biblioteca ficarem em discos
   diferentes ele **copia** — e aí o espaço é duplicado de verdade. O log em
   `logs/autorun.log` diz qual dos dois aconteceu. Mantenha os dois no mesmo
-  volume e o problema não existe. Séries são agrupadas por show e temporada
+  volume e o problema não existe. Outro detalhe que economiza confusão: vídeos
+  com menos de **100 MB** são ignorados de propósito — é o filtro que descarta
+  amostras e trailers que vêm junto do torrent. Se um arquivo legítimo e
+  pequeno não aparecer na biblioteca, é isso, e o `autorun.log` registra o
+  descarte. Séries são agrupadas por show e temporada
   tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
   `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
   mesma pasta em vez de virarem dez séries soltas.
 - **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
   nova do Plex (e em algumas distros nem há repositório utilizável), então este
   comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família;
-  no Arch, aponta pro AUR), faz backup do banco e reinstala.
+  no Arch, aponta pro AUR), faz backup do banco e reinstala. Não exige servidor
+  reivindicado: sem token ele usa o canal público, e com token respeita o canal
+  da sua conta. Se a instalação do pacote falhar, ele sai com erro apontando o
+  backup — em vez de deixar você com o Plex parado e um "Pronto" na tela.
 
 ## Ajustando ao seu setup
 
