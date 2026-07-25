@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh | sudo bash
 #
 # Parametrizavel por variaveis de ambiente:
-#   PLEXDEN_HOME   diretorio persistente da stack   (default /var/www/html/plex)
+#   PLEXDEN_HOME   diretorio persistente da stack    (default /srv/plexden)
 #   PLEXDEN_USER   usuario que roda os servicos      (default plex)
 #   PLEXDEN_REPO   owner/repo no GitHub              (default pedrorodbit/plexden)
 #   PLEXDEN_BRANCH branch                            (default main)
