@@ -86,11 +86,22 @@ jobs:
   # Debian descartavel, e depois a bateria do .github/e2e.sh (servicos no ar,
   # login na WebUI, pause/resume, hardlink). E o unico tipo de job que muta o
   # sistema.
+  #
+  # Duas imagens: o Debian estavel e o Ubuntu LTS. O Ubuntu nao esta ai so por
+  # ser derivado popular — ele empacota uma serie 4.x do qBittorrent, e as tres
+  # outras imagens do CI trazem 5.x. Sem ele, o ramo pause/resume do gate de
+  # versao da Web API nunca seria exercitado: so o stop/start do qB 5.
   e2e-deb:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:stable-slim
+          - image: ubuntu:24.04
     container:
-      image: debian:stable-slim
+      image: ${{ matrix.image }}
     steps:
       # De proposito NAO instalamos curl: o install.sh tem que se virar sozinho
       # (ensure_curl) — esse caminho tambem faz parte do teste.

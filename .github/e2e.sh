@@ -144,6 +144,12 @@ state() {
 }
 for _ in $(seq 1 20); do [ -n "$(state)" ] && break; sleep 1; done
 [ -n "$(state)" ] || fail "o torrent nao entrou na lista"
+# Deixa visivel no log qual lado do gate esta sendo exercitado: >= 2.11 usa
+# stop/start (qB 5), abaixo disso usa pause/resume (qB 4).
+api=$(curl -s -b $COOKIE "$QB/app/webapiVersion")
+echo "  qBittorrent $(su - "$PLEX_USER" -c 'qbittorrent-nox --version' 2>/dev/null | tail -1)"
+echo "  Web API $api -> endpoints $(
+    case "$api" in 2.1[1-9]*|2.[2-9]*|[3-9].*) echo 'stop/start' ;; *) echo 'pause/resume' ;; esac)"
 echo "  estado inicial: $(state)"
 
 su - "$PLEX_USER" -c 'plexden qb pause'
