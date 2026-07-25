@@ -44,14 +44,19 @@ jobs:
         include:
           - image: debian:stable-slim
             pkg: apt-get
+            plexpkg: plexmediaserver
           - image: fedora:latest
             pkg: dnf
+            plexpkg: plexmediaserver
           - image: almalinux:9
             pkg: dnf
+            plexpkg: plexmediaserver
           - image: opensuse/leap:latest
             pkg: zypper
+            plexpkg: plexmediaserver
           - image: archlinux:latest
             pkg: pacman
+            plexpkg: plex-media-server
     container:
       image: ${{ matrix.image }}
     steps:
@@ -80,6 +85,9 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "gerenciador detectado: ${{ matrix.pkg }}"
           echo "$out" | grep -q "plexden: sintaxe Python OK"
+          # no Arch o pacote e plex-media-server: checar o nome errado fazia o
+          # provision repetir "instale pelo AUR" com o Plex ja instalado
+          echo "$out" | grep -q "pacote do plex: ${{ matrix.plexpkg }}"
 
       - name: plexden compila sob o python desta distro
         run: |
