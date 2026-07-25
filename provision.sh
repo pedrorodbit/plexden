@@ -136,6 +136,29 @@ done
 
 # ------------------------------------------------------------------- plex ---
 # Familia deb: repo apt assinado. Familia rpm: .repo + rpm --import. Arch: AUR.
+#
+# O repositorio e o caminho preferido (deixa o 'apt/dnf upgrade' cuidar do Plex),
+# mas ele nao e confiavel: em 2026 o apt do Debian 13+ passou a verificar com
+# sequoia (sqv), que recusa a chave do Plex porque a assinatura de vinculo dela
+# e SHA1 — o repo simplesmente para de existir para o apt. Por isso todo caminho
+# tem fallback para o pacote oficial baixado direto, que e a mesma origem que o
+# 'plexden update' usa e nao depende de repositorio nenhum.
+
+# Baixa o pacote oficial mais novo. O endpoint publico redireciona para o
+# .deb/.rpm da versao atual e dispensa token (o token so importa no update, para
+# canais de assinante).
+plex_download() {   # $1 = debian|redhat, $2 = arquivo de destino
+    case "$(uname -m)" in
+        x86_64|amd64)  pbuild=linux-x86_64 ;;
+        aarch64|arm64) pbuild=linux-aarch64 ;;
+        armv7l|armhf)  pbuild=linux-armv7neon ;;
+        *) log "  arquitetura sem build do Plex: $(uname -m)"; return 1 ;;
+    esac
+    log "  baixando o pacote oficial do Plex ($pbuild)"
+    curl -fsSL --max-time 600 -o "$2" \
+      "https://plex.tv/downloads/latest/5?channel=16&build=${pbuild}&distro=$1"
+}
+
 install_plex() {
     if pkg_installed plexmediaserver; then
         log "  plexmediaserver ja instalado"
@@ -149,16 +172,28 @@ install_plex() {
               | gpg --dearmor -o /etc/apt/keyrings/plex.gpg
             echo "deb [signed-by=/etc/apt/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" \
               > /etc/apt/sources.list.d/plexmediaserver.list
-            apt-get update -qq
-            pkg_install plexmediaserver || fail "falha ao instalar plexmediaserver"
+            apt-get update -qq || true
+            if pkg_install plexmediaserver; then
+                log "  instalado pelo repositorio do Plex"
+            else
+                # Repo inutilizavel. Remove a entrada: deixa-la ali so faria todo
+                # 'apt update' do usuario terminar em erro daqui pra frente.
+                log "  repositorio do Plex recusado pelo apt — usando o pacote oficial"
+                rm -f /etc/apt/sources.list.d/plexmediaserver.list
+                apt-get update -qq || true
+                plex_download debian /tmp/plex.deb || fail "download do Plex falhou"
+                DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/plex.deb >/dev/null 2>&1 || \
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -f
+                rm -f /tmp/plex.deb
+                pkg_installed plexmediaserver || fail "falha ao instalar plexmediaserver"
+            fi
             ;;
         dnf|yum|zypper)
-            rpm --import https://downloads.plex.tv/plex-keys/PlexSign.key \
-              || fail "falha ao importar a chave do Plex"
             repodir=/etc/yum.repos.d
             [ "$PKG" = zypper ] && repodir=/etc/zypp/repos.d
-            mkdir -p "$repodir"
-            cat > "$repodir/plex.repo" <<'REPO'
+            if rpm --import https://downloads.plex.tv/plex-keys/PlexSign.key 2>/dev/null; then
+                mkdir -p "$repodir"
+                cat > "$repodir/plex.repo" <<'REPO'
 [PlexRepo]
 name=Plex
 baseurl=https://downloads.plex.tv/repo/rpm/$basearch/
@@ -166,7 +201,23 @@ enabled=1
 gpgkey=https://downloads.plex.tv/plex-keys/PlexSign.key
 gpgcheck=1
 REPO
-            pkg_install plexmediaserver || fail "falha ao instalar plexmediaserver"
+            else
+                log "  chave do Plex recusada pelo rpm — pulando o repositorio"
+            fi
+            if pkg_install plexmediaserver; then
+                log "  instalado pelo repositorio do Plex"
+            else
+                log "  repositorio do Plex indisponivel — usando o pacote oficial"
+                rm -f "$repodir/plex.repo"
+                plex_download redhat /tmp/plex.rpm || fail "download do Plex falhou"
+                case "$PKG" in
+                    dnf)    dnf install -y -q /tmp/plex.rpm ;;
+                    yum)    yum install -y -q /tmp/plex.rpm ;;
+                    zypper) zypper -n --no-gpg-checks install /tmp/plex.rpm ;;
+                esac
+                rm -f /tmp/plex.rpm
+                pkg_installed plexmediaserver || fail "falha ao instalar plexmediaserver"
+            fi
             ;;
         pacman)
             log "  Arch: o Plex nao tem pacote oficial nos repos."
