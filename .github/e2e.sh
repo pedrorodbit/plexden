@@ -128,9 +128,15 @@ open('/tmp/ci.torrent', 'wb').write(be(torrent))
 PY
 chown "$PLEX_USER:$PLEX_USER" "$PERSIST/torrents/complete/plexden-ci.bin"
 
-curl -s -c $COOKIE -d "username=$QB_USER&password=$QB_PASS" "$QB/auth/login" | grep -q Ok
-curl -s -b $COOKIE -F 'torrents=@/tmp/ci.torrent' -F 'skip_checking=true' \
-     -F "savepath=$PERSIST/torrents/complete" "$QB/torrents/add" | grep -q Ok
+# O corpo da resposta nao serve de criterio: ate o qB 5.1 o login devolvia
+# 200 "Ok.", o 5.2 devolve 204 sem corpo. O que vale e o cookie de sessao.
+curl -s -c $COOKIE -o /dev/null -d "username=$QB_USER&password=$QB_PASS" \
+     "$QB/auth/login"
+grep -q 'SID' $COOKIE || fail "o login pela Web API nao devolveu cookie de sessao"
+add=$(curl -s -b $COOKIE -o /dev/null -w '%{http_code}' \
+      -F 'torrents=@/tmp/ci.torrent' -F 'skip_checking=true' \
+      -F "savepath=$PERSIST/torrents/complete" "$QB/torrents/add")
+case "$add" in 2*) ;; *) fail "torrents/add devolveu HTTP $add" ;; esac
 
 state() {
     curl -s -b $COOKIE "$QB/torrents/info" \

@@ -490,16 +490,24 @@ class QB:
         with self.opener.open(req, timeout=30) as r:
             return r.status, r.read().decode("utf-8", "replace")
 
+    def _tem_sessao(self):
+        """True se o qB entregou o cookie de sessao (SID_*/QBT_SID_*)."""
+        return any(c.name.startswith(("SID", "QBT_SID")) for c in self.jar)
+
     def login(self):
         try:
-            _, text = self._req("/api/v2/auth/login",
-                                {"username": self.creds["QB_USER"],
-                                 "password": self.creds["QB_PASS"]})
+            status, text = self._req("/api/v2/auth/login",
+                                     {"username": self.creds["QB_USER"],
+                                      "password": self.creds["QB_PASS"]})
         except Exception as e:
             sys.exit(f"ERRO no login: {e}")
-        if text.strip() != "Ok.":
-            sys.exit(f"ERRO no login: {text or 'sem resposta'}\n"
-                     "(confira QB_USER/QB_PASS em ~/.qbcreds)")
+        # Ate o qB 5.1 a resposta era 200 com o corpo "Ok."; o 5.2 passou a
+        # responder 204 sem corpo nenhum, entregando so o cookie. Quem decide,
+        # entao, e o cookie de sessao — nao o texto.
+        if text.strip() == "Ok." or (200 <= status < 300 and self._tem_sessao()):
+            return
+        sys.exit(f"ERRO no login: HTTP {status} {text.strip() or '(sem corpo)'}\n"
+                 "(confira QB_USER/QB_PASS em ~/.qbcreds)")
 
     def torrents(self, hashes=None):
         path = "/api/v2/torrents/info"
