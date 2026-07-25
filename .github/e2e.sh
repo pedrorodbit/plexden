@@ -17,8 +17,21 @@ COOKIE=/tmp/qb.cookie
 QB_USER=citest
 QB_PASS=senha-do-ci-123
 
-log()  { echo; echo "== $* =="; }
-fail() { echo "FALHOU: $*" >&2; exit 1; }
+log() { echo; echo "== $* =="; }
+
+# Quando algo nao sobe, o que interessa e o motivo — e um daemon que morre nao
+# deixa rastro nenhum no log do job. Entao repetimos a subida em primeiro plano
+# so para capturar a mensagem.
+diagnostico() {
+    echo "--- processos da stack ---"
+    pgrep -a -f 'qbittorrent-nox|Plex Media Server|cloudflared' || echo "(nenhum)"
+    echo "--- qbittorrent-nox em primeiro plano (5s) ---"
+    timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox --confirm-legal-notice' 2>&1 \
+      | tail -20 || true
+    echo "--- journal do qbittorrent, se houver ---"
+    journalctl -n 20 --no-pager 2>/dev/null | tail -20 || echo "(sem journal)"
+}
+fail() { echo "FALHOU: $*" >&2; diagnostico >&2; exit 1; }
 
 pkg_has() {
     if command -v dpkg >/dev/null 2>&1; then dpkg -s "$1" >/dev/null 2>&1
