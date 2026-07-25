@@ -51,19 +51,30 @@ toda parte; o que muda é como o Plex chega.
 
 | Família | Distros | Gerenciador | Plex | CI |
 |---|---|---|---|---|
-| Debian | Debian, Ubuntu, Mint e derivados | `apt` | repositório oficial | ✅ testado |
-| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | repositório oficial | ✅ Fedora + Alma |
-| SUSE | openSUSE, SLES | `zypper` | repositório oficial | ✅ openSUSE Leap |
-| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ testado |
+| Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | ✅ **instalação completa** |
+| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | ✅ Fedora + Alma (dry-run) |
+| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ openSUSE Leap (dry-run) |
+| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ dry-run |
 
-Onde diz "CI testado", cada push roda o `provision.sh` em modo dry-run naquela
-distro e confere que o gerenciador certo foi detectado e que o `plexden` compila
-sob o Python de lá — é o que o badge de CI lá no topo reflete. Ainda é validação
-de detecção e sintaxe, não uma instalação completa em VM; o resto é exercitado à
-mão.
+São dois níveis de teste, e a diferença importa:
 
-Duas ressalvas honestas:
+- **Instalação completa** (hoje, Debian) — cada push instala a stack do zero num
+  container: baixa tudo, sobe os serviços e confere que o Plex responde em
+  `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com a
+  senha gerada, e que o `postprocess` cria hardlink de verdade na biblioteca.
+- **Dry-run** (as demais) — roda o `provision.sh --check`, que confere que o
+  gerenciador certo foi detectado e que o `plexden` compila sob o Python de lá.
+  Valida detecção e sintaxe, não a instalação em si.
 
+Três ressalvas honestas:
+
+- **O Plex vem do pacote oficial, não do repositório.** O instalador ainda tenta
+  configurar o repositório do Plex primeiro, mas ele anda quebrado: desde
+  fevereiro de 2026 o apt do Debian 13+ verifica assinaturas com o Sequoia, que
+  recusa a chave do Plex (a assinatura de vínculo dela é SHA1). Quando isso
+  acontece, o instalador remove a entrada de repositório (senão todos os seus
+  `apt update` passariam a dar erro) e baixa o pacote oficial direto. Efeito
+  colateral: o Plex não é atualizado pelo `apt upgrade`; use o `plexden update`.
 - **Arch** — o Plex não tem pacote oficial. O instalador prepara tudo e te manda
   instalar pelo AUR (ex.: `yay -S plex-media-server`); depois é só rodar o
   `provision.sh` de novo. O `plexden update`, no Arch, também aponta pro AUR em
