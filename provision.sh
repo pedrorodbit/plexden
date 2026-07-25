@@ -98,10 +98,12 @@ log "  gerenciador detectado: $PKG"
 
 # Nomes que variam por familia: procps -> procps-ng (rpm/arch); python3 ->
 # python (arch); gnupg so e' preciso no apt (dearmor da chave do Plex).
+# util-linux (o 'su') e' essencial no Debian, mas nao vem numa Fedora/RHEL
+# enxuta — e a stack inteira sobe os servicos com 'su - $PLEX_USER'.
 case "$PKG" in
     apt-get)        base="curl wget ca-certificates sudo qbittorrent-nox gnupg procps psmisc python3" ;;
-    pacman)         base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python" ;;
-    dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3" ;;
+    pacman)         base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python util-linux" ;;
+    dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3 util-linux" ;;
 esac
 
 # Dry-run: reporta o plano e valida o plexden, sem tocar no sistema.
@@ -132,6 +134,13 @@ fi
 pkg_refresh
 for p in $base; do
     install_if_missing "$p"
+done
+
+# Sem estes, a stack falha de um jeito silencioso e dificil de diagnosticar: os
+# servicos sobem com 'su' e a saude e' medida com HTTP. Melhor parar aqui.
+for c in su curl pgrep; do
+    command -v "$c" >/dev/null 2>&1 || \
+      fail "'$c' nao existe mesmo apos instalar os pacotes base — abortando"
 done
 
 # ------------------------------------------------------------------- plex ---
