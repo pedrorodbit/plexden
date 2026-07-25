@@ -109,10 +109,20 @@ case "$PKG" in
     zypper)  base="curl wget ca-certificates sudo qbittorrent-nox procps psmisc python3 util-linux" ;;
 esac
 
+# Nome do pacote do Plex. O AUR empacota como 'plex-media-server'; em toda outra
+# familia e' 'plexmediaserver'. Checar o nome errado fazia o provision, no Arch,
+# repetir "instale pelo AUR" mesmo com o Plex ja instalado — quebrando a
+# idempotencia justo na distro em que o passo e manual.
+case "$PKG" in
+    pacman) PLEX_PKG=plex-media-server ;;
+    *)      PLEX_PKG=plexmediaserver ;;
+esac
+
 # Dry-run: reporta o plano e valida o plexden, sem tocar no sistema.
 if [ "$CHECK" = 1 ]; then
     log "== MODO --check (dry-run) — nada sera instalado =="
     log "  pacotes base: $base"
+    log "  pacote do plex: $PLEX_PKG"
     case "$PKG" in
         apt-get)        log "  plex: repositorio apt assinado (distro=debian)" ;;
         dnf|yum|zypper) log "  plex: repositorio rpm (.repo + rpm --import)" ;;
@@ -172,11 +182,11 @@ plex_download() {   # $1 = debian|redhat, $2 = arquivo de destino
 }
 
 install_plex() {
-    if pkg_installed plexmediaserver; then
-        log "  plexmediaserver ja instalado"
+    if pkg_installed "$PLEX_PKG"; then
+        log "  $PLEX_PKG ja instalado"
         return 0
     fi
-    log "  instalando plexmediaserver"
+    log "  instalando $PLEX_PKG"
     case "$PKG" in
         apt-get)
             mkdir -p /etc/apt/keyrings
@@ -185,7 +195,7 @@ install_plex() {
             echo "deb [signed-by=/etc/apt/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" \
               > /etc/apt/sources.list.d/plexmediaserver.list
             apt-get update -qq || true
-            if pkg_install plexmediaserver; then
+            if pkg_install "$PLEX_PKG"; then
                 log "  instalado pelo repositorio do Plex"
             else
                 # Repo inutilizavel. Remove a entrada: deixa-la ali so faria todo
@@ -197,7 +207,7 @@ install_plex() {
                 DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/plex.deb >/dev/null 2>&1 || \
                   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -f
                 rm -f /tmp/plex.deb
-                pkg_installed plexmediaserver || fail "falha ao instalar plexmediaserver"
+                pkg_installed "$PLEX_PKG" || fail "falha ao instalar $PLEX_PKG"
             fi
             ;;
         dnf|yum|zypper)
@@ -216,7 +226,7 @@ REPO
             else
                 log "  chave do Plex recusada pelo rpm — pulando o repositorio"
             fi
-            if pkg_install plexmediaserver; then
+            if pkg_install "$PLEX_PKG"; then
                 log "  instalado pelo repositorio do Plex"
             else
                 log "  repositorio do Plex indisponivel — usando o pacote oficial"
@@ -228,7 +238,7 @@ REPO
                     zypper) zypper -n --no-gpg-checks install /tmp/plex.rpm ;;
                 esac
                 rm -f /tmp/plex.rpm
-                pkg_installed plexmediaserver || fail "falha ao instalar plexmediaserver"
+                pkg_installed "$PLEX_PKG" || fail "falha ao instalar $PLEX_PKG"
             fi
             ;;
         pacman)
