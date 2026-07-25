@@ -45,23 +45,23 @@ jobs:
           - image: debian:stable-slim
             pkg: apt-get
             plexpkg: plexmediaserver
-            nivel: completo
+            tier: 1
           - image: fedora:latest
             pkg: dnf
             plexpkg: plexmediaserver
-            nivel: completo
+            tier: 1
           - image: almalinux:9
             pkg: dnf
             plexpkg: plexmediaserver
-            nivel: parcial
+            tier: 2
           - image: opensuse/leap:latest
             pkg: zypper
             plexpkg: plexmediaserver
-            nivel: completo
+            tier: 1
           - image: archlinux:latest
             pkg: pacman
             plexpkg: plex-media-server
-            nivel: parcial
+            tier: 2
     container:
       image: ${{ matrix.image }}
     steps:
@@ -93,9 +93,9 @@ jobs:
           # no Arch o pacote e plex-media-server: checar o nome errado fazia o
           # provision repetir "instale pelo AUR" com o Plex ja instalado
           echo "$out" | grep -q "pacote do plex: ${{ matrix.plexpkg }}"
-          # o aviso de cobertura precisa dizer a verdade sobre ESTA distro:
-          # 'completo' so onde o e2e instala de fato, 'parcial' onde e' so dry-run
-          echo "$out" | grep -q "NIVEL: ${{ matrix.nivel }}"
+          # o tier anunciado ao usuario precisa dizer a verdade sobre ESTA
+          # distro: 1 so onde o e2e instala de fato, 2 onde e' so dry-run
+          echo "$out" | grep -q "Tier ${{ matrix.tier }} —"
           echo "$out" | grep -qE "VEREDITO: (roda com folga|da conta|no limite)"
 
       - name: plexden compila sob o python desta distro

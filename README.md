@@ -44,21 +44,21 @@ impede a instalação, só informa:
 ```
 == Cobertura de teste deste SO ==
   SO: Ubuntu 22.04.5 LTS
-  NIVEL: parcial — o CI testa o Ubuntu 24.04, nao o 22.04.
-         Mesmo caminho de codigo, mas esta versao nao e exercitada.
+  Tier 3 — o CI testa o Ubuntu 24.04, nao o 22.04.
+           Mesmo caminho de codigo, versao nao exercitada.
 == Este computador ==
-  CPU:     2 nucleo(s) — Intel(R) Xeon(R) Platinum 8488C
+  CPU:     2 nucleo(s) — Intel(R) Core(TM) i5-8250U
   Memoria: 2.0 GB
   Disco:   60.0 GB livres para /srv/plexden
   VEREDITO: da conta
             - RAM entre 1,5 e 3 GB: da para reproducao direta, aperta se transcodificar
             - menos de 4 nucleos: um transcode 1080p por vez, no maximo
+            - menos de 100 GB livres: da para comecar, planeje o crescimento
 ```
 
-O **nível** diz o quanto o CI exercita o seu sistema: `completo` (instalação
-inteira a cada push), `parcial` (só dry-run, ou versão diferente da testada),
-`por parentesco` (a família é testada, sua distro não) ou `nenhum`. O
-**veredito** é `roda com folga`, `dá conta` ou `no limite`, com o motivo de cada
+O **tier** é o mesmo da tabela de [distros suportadas](#distros-suportadas) — o
+instalador te diz com o que você pode contar antes de começar, em vez de você
+ter que procurar. O **veredito** é `roda com folga`, `dá conta` ou `no limite`, com o motivo de cada
 ressalva — e ele mede núcleos, RAM e disco, não velocidade de transcodificação,
 que depende do modelo da CPU e nenhum número ali captura. Para só ver isso, sem
 instalar nada: `./provision.sh --check`.
@@ -77,17 +77,41 @@ qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação**
 sozinhos. Os pacotes base e o `cloudflared` (binário estático) são iguais em
 toda parte; o que muda é como o Plex chega.
 
-| Família | Distros | Gerenciador | Plex | CI |
+| Família | Distros | Gerenciador | Plex | Suporte |
 |---|---|---|---|---|
-| Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | ✅ **instalação completa** (Debian stable + Ubuntu LTS) |
-| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | ✅ **instalação completa** (Fedora) |
-| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ **instalação completa** (openSUSE Leap) |
-| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ dry-run |
+| Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | **Tier 1** |
+| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | **Tier 1** |
+| SUSE | openSUSE, SLES | `zypper` | pacote oficial | **Tier 1** |
+| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | **Tier 2** |
 
-A coluna "CI" é literal: ela nomeia as distros que realmente rodam no CI. As
-outras da mesma linha andam pelo mesmo caminho de código, mas não são testadas —
-Mint, por exemplo, herda o resultado do Ubuntu por ser `apt`, e ninguém o
-instalou de fato.
+### O que cada tier promete
+
+Testar e prometer são coisas diferentes. A tabela acima diz onde o código passa;
+esta diz com o que você pode contar:
+
+| Tier | Promessa | Onde vale |
+|---|---|---|
+| **1** | instalação completa roda a cada push; regressão segura o merge | Debian estável, Ubuntu 24.04, Fedora, openSUSE Leap |
+| **2** | só o dry-run roda a cada push; regressão vira issue, não bloqueia | Arch, AlmaLinux 9 |
+| **3** | melhor esforço, sem teste nenhum; issue e PR são bem-vindos | as demais distros das famílias acima — Mint, Rocky, SLES, Manjaro… |
+| **—** | fora de alcance, e não por falta de vontade | Alpine e qualquer sistema musl, NixOS, Gentoo |
+
+O tier vale para a **distro nomeada**, não para a família inteira. Mint herda o
+caminho de código do Ubuntu, mas ninguém instalou nele — por isso é Tier 3, e
+não Tier 1 por parentesco. O `provision.sh` te diz em que nível você está antes
+de instalar qualquer coisa.
+
+Sobre o último tier, para ninguém perder tempo descobrindo na prática:
+
+- **Alpine e outros sistemas musl** — o Plex Media Server é distribuído só em
+  builds contra a glibc; não há versão musl. Não é uma lacuna de teste que dá
+  para fechar, é o fim da linha para esta stack. Se você quer um servidor de
+  mídia em container mínimo, o caminho é uma base glibc enxuta (`debian:slim`),
+  não o Alpine.
+- **NixOS e Gentoo** — o modelo de instalação é outro. Um instalador imperativo
+  que grava em `/usr/local/bin` e `/etc/init.d` não é "difícil" no NixOS, é
+  inaplicável. O jeito certo seria um pacote Nix próprio, e isso este repositório
+  não tem.
 
 Antes dos dois, há um terceiro nível que não depende de distro nenhuma:
 `tests/` guarda as formas de resposta que o qBittorrent usa no login, simuladas.
@@ -96,7 +120,8 @@ recusava um login que tinha funcionado. Hoje o Fedora exercita essa forma no CI,
 mas por acaso — se ele mudar de versão, a cobertura sumiria sem nada ficar
 vermelho. Os testes simulados não dependem dessa coincidência.
 
-São dois níveis de teste de instalação, e a diferença importa:
+São duas profundidades de teste de instalação, e a diferença é o que separa o
+Tier 1 do Tier 2:
 
 - **Instalação completa** — exatamente quatro imagens: `debian:stable-slim`,
   `ubuntu:24.04`, `fedora:latest` e `opensuse/leap:latest`. Cada push instala a
