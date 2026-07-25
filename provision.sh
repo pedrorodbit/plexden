@@ -100,10 +100,13 @@ log "  gerenciador detectado: $PKG"
 # python (arch); gnupg so e' preciso no apt (dearmor da chave do Plex).
 # util-linux (o 'su') e' essencial no Debian, mas nao vem numa Fedora/RHEL
 # enxuta — e a stack inteira sobe os servicos com 'su - $PLEX_USER'.
+# O zypper fica em caso proprio: no openSUSE o pacote e' 'procps', nao
+# 'procps-ng' — pedir o nome errado abortava a instalacao inteira.
 case "$PKG" in
-    apt-get)        base="curl wget ca-certificates sudo qbittorrent-nox gnupg procps psmisc python3" ;;
-    pacman)         base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python util-linux" ;;
-    dnf|yum|zypper) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3 util-linux" ;;
+    apt-get) base="curl wget ca-certificates sudo qbittorrent-nox gnupg procps psmisc python3" ;;
+    pacman)  base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python util-linux" ;;
+    dnf|yum) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3 util-linux" ;;
+    zypper)  base="curl wget ca-certificates sudo qbittorrent-nox procps psmisc python3 util-linux" ;;
 esac
 
 # Dry-run: reporta o plano e valida o plexden, sem tocar no sistema.

@@ -124,39 +124,47 @@ jobs:
           ls -la /srv/plexden /home/plex 2>/dev/null || true
           cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
 
-  # ------------------------------------------------------------ e2e rpm ---
-  # Mesmo teste na familia RPM. Aqui nao da para usar 'container:' como no
-  # Debian: o .rpm do Plex tem um scriptlet %pre que aborta a instalacao com
-  # "Plex Media Server requires systemd" — o .deb nao faz isso. Entao o job
-  # constroi uma imagem Fedora com systemd e a roda privilegiada, para o PID 1
-  # ser systemd de verdade. Sem isso, o ramo rpm do provision.sh e' impossivel
-  # de exercitar.
-  e2e-rpm:
+  # ------------------------------------------------------ e2e com systemd ---
+  # Mesmo teste nas familias que empacotam o Plex em .rpm. Aqui nao da para usar
+  # 'container:' como no Debian: o .rpm do Plex tem um scriptlet %pre que aborta
+  # a instalacao com "Plex Media Server requires systemd" — o .deb nao faz isso.
+  # Entao o job constroi uma imagem com systemd e a roda privilegiada, para o
+  # PID 1 ser systemd de verdade. Sem isso, os ramos dnf e zypper do
+  # provision.sh sao impossiveis de exercitar.
+  e2e-systemd:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:latest
+            deps: dnf -y install systemd procps-ng && dnf clean all
+          - image: opensuse/leap:latest
+            deps: zypper -n --gpg-auto-import-keys refresh && zypper -n install systemd procps && zypper clean -a
     steps:
       - uses: actions/checkout@v5
 
-      - name: Imagem Fedora com systemd
+      - name: Imagem com systemd
         run: |
-          docker build -t fedora-systemd - <<'DOCKERFILE'
-          FROM fedora:latest
-          RUN dnf -y install systemd procps-ng && dnf clean all
+          docker build -t distro-systemd - <<DOCKERFILE
+          FROM ${{ matrix.image }}
+          RUN ${{ matrix.deps }}
           CMD ["/usr/sbin/init"]
           DOCKERFILE
 
       - name: Sobe o container e espera o systemd
         run: |
-          docker run -d --name plexden-rpm --privileged --cgroupns=host \
+          docker run -d --name plexden-e2e --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-            -v "$PWD:/repo:ro" fedora-systemd
+            -v "$PWD:/repo:ro" distro-systemd
           for _ in $(seq 1 60); do
-            s=$(docker exec plexden-rpm systemctl is-system-running 2>/dev/null || true)
+            s=$(docker exec plexden-e2e systemctl is-system-running 2>/dev/null || true)
             case "$s" in running|degraded) echo "systemd: $s"; exit 0 ;; esac
             sleep 2
           done
           echo "systemd nao ficou pronto (ultimo estado: ${s:-nenhum})"
-          docker logs plexden-rpm | tail -30
+          docker logs plexden-e2e | tail -30
           exit 1
 
       # O checkout e montado read-only, entao o install.sh copia dele para o
@@ -164,17 +172,17 @@ jobs:
       - name: install.sh completo (instala e sobe a stack)
         run: |
           docker exec -e PLEXDEN_HOME=/srv/plexden -e PLEXDEN_USER=plex \
-            -e PLEXDEN_RAW=file:///repo plexden-rpm bash /repo/install.sh
+            -e PLEXDEN_RAW=file:///repo plexden-e2e bash /repo/install.sh
 
       - name: Bateria de verificacao
-        run: docker exec plexden-rpm bash /repo/.github/e2e.sh /repo
+        run: docker exec plexden-e2e bash /repo/.github/e2e.sh /repo
 
       - name: Logs, se algo falhar
         if: failure()
         run: |
-          docker exec plexden-rpm sh -c 'tail -n 60 /srv/plexden/config/*.log' 2>/dev/null || true
-          docker exec plexden-rpm ls -la /srv/plexden /home/plex 2>/dev/null || true
-          docker exec plexden-rpm cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
+          docker exec plexden-e2e sh -c 'tail -n 60 /srv/plexden/config/*.log' 2>/dev/null || true
+          docker exec plexden-e2e ls -la /srv/plexden /home/plex 2>/dev/null || true
+          docker exec plexden-e2e cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
 
   # ------------------------------------------------------ urls publicas ---
   # O one-liner do README depende dessas URLs; os jobs e2e instalam do checkout
