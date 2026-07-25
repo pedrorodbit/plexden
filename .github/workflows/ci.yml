@@ -58,6 +58,9 @@ jobs:
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y -q python3 git
           elif command -v zypper >/dev/null 2>&1; then
+            # sem o refresh, os metadados da imagem ficam atras dos mirrors e a
+            # instalacao morre com 404 em pacote que ja rodou de versao
+            zypper -n --gpg-auto-import-keys refresh
             zypper -n install python3 git
           elif command -v pacman >/dev/null 2>&1; then
             pacman -Sy --noconfirm --needed archlinux-keyring
