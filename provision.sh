@@ -484,6 +484,16 @@ else
     log "  config ja existe — preservada"
 fi
 
+# O aceite do aviso legal precisa estar la mesmo num conf preexistente: sem ele,
+# um qBittorrent 4.x (que nao aceita --confirm-legal-notice) fica pedindo
+# confirmacao num terminal que nao existe e nunca sobe. Antes isto so era
+# gravado quando o conf era criado do zero.
+if ! grep -q '^\[LegalNotice\]' "$QBCONF" 2>/dev/null; then
+    printf '\n[LegalNotice]\nAccepted=true\n' >> "$QBCONF"
+    chown "$PLEX_USER:$PLEX_USER" "$QBCONF"
+    log "  aviso legal aceito no conf existente"
+fi
+
 # Alinha usuario/senha da WebUI ao credentials.env. Sem isso, 'plexden qb' pode
 # nao logar numa instalacao nova: a serie 4.x usa 'adminadmin', mas a 5.x
 # (Fedora/Arch) gera uma senha aleatoria a cada boot ate uma ser definida. Faz
@@ -548,7 +558,11 @@ if [ -z "$TUNNEL_UUID" ]; then
     j=$(find "$PERSIST"/cloudflared -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
     [ -n "$j" ] && TUNNEL_UUID=$(basename "$j" .json)
 fi
-if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] && [ -f "$PERSIST/cloudflared/$TUNNEL_UUID.json" ]; then
+# O config.yml entra na condicao porque ele tambem e copiado logo abaixo: sem
+# isso, faltando so ele, o cp falhava em silencio e o tunnel subia sem rota.
+if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] \
+   && [ -f "$PERSIST/cloudflared/$TUNNEL_UUID.json" ] \
+   && [ -f "$PERSIST/cloudflared/config.yml" ]; then
     mkdir -p /etc/cloudflared
     cp "$PERSIST/cloudflared/config.yml"        /etc/cloudflared/
     cp "$PERSIST/cloudflared/cert.pem"          /etc/cloudflared/
@@ -634,14 +648,33 @@ fi
 # --------------------------------------------------------------- resumo -----
 echo
 log "== Verificacao =="
-CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null)
-echo "  Plex        HTTP ${CODE:-sem resposta}"
+FALHOU=""
+PLEX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null)
+echo "  Plex        HTTP ${PLEX_CODE:-sem resposta}"
+[ "$PLEX_CODE" = 200 ] || FALHOU="$FALHOU Plex"
 CLAIMED=$(curl -s --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null \
           | grep -o 'claimed="[01]"')
 echo "  ${CLAIMED:-claim desconhecido}"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8081/ 2>/dev/null)
-echo "  qBittorrent HTTP ${CODE:-sem resposta}"
-pgrep -x cloudflared >/dev/null && echo "  cloudflared rodando" || echo "  cloudflared PARADO"
+QB_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8081/ 2>/dev/null)
+echo "  qBittorrent HTTP ${QB_CODE:-sem resposta}"
+[ "$QB_CODE" = 200 ] || FALHOU="$FALHOU qBittorrent"
+# Tunnel e opcional: dizer "PARADO" para quem nunca o configurou e alarme falso.
+if pgrep -x cloudflared >/dev/null 2>&1; then
+    echo "  cloudflared rodando"
+elif [ -f /etc/cloudflared/cert.pem ]; then
+    echo "  cloudflared PARADO"
+else
+    echo "  cloudflared nao configurado (opcional)"
+fi
 
 echo
+# Sair 0 com servico fora do ar fazia o install.sh anunciar "Software
+# instalado" em cima de uma stack que nao subiu.
+if [ -n "$FALHOU" ]; then
+    log "FALHOU:$FALHOU nao respondeu(ram)."
+    log "  Veja o log:      tail -50 /tmp/plex.log"
+    log "  Estado da stack: plexden services status"
+    log "  Tentar de novo:  sudo plexden services start"
+    exit 1
+fi
 log "Pronto. Se o Plex mostrar claimed=\"0\", siga a secao 'Claim' do README."
