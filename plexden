@@ -761,6 +761,8 @@ def cmd_postprocess(args):
 def ensure_init_stub():
     """(Re)cria os stubs de integracao que apontam para o plexden."""
     self = os.path.abspath(sys.argv[0])
+    # Numa Fedora/RHEL enxuta /etc/init.d nem existe (vem com initscripts).
+    os.makedirs(os.path.dirname(INIT_PLEX), exist_ok=True)
     with open(INIT_PLEX, "w") as f:
         f.write("#!/bin/sh\n"
                 "### BEGIN INIT INFO\n"

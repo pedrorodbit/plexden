@@ -275,6 +275,9 @@ fi
 
 # init script (stub SysV -> plexden _init). O pacote do Plex o remove ao
 # atualizar; o 'plexden update' e este provision o recriam.
+# O mkdir nao e' decorativo: numa Fedora/RHEL enxuta /etc/init.d nem existe
+# (vem com initscripts), e sem ele o stub era silenciosamente perdido.
+mkdir -p /etc/init.d
 cat > /etc/init.d/plexmediaserver <<'EOF'
 #!/bin/sh
 ### BEGIN INIT INFO
