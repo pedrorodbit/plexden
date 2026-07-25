@@ -264,17 +264,25 @@ def _rm(path):
         pass
 
 
+def _qb_legal_flag():
+    """' --confirm-legal-notice', se o binario aceitar a flag.
+
+    Ela so existe a partir do qB 5. Na serie 4.x o binario responde
+    'unknown command line parameter' e nem sobe — passar a flag as cegas
+    quebra a stack inteira nessas distros. O aceite do aviso, la, vem do
+    [LegalNotice] gravado no qBittorrent.conf pelo provision.
+    """
+    out = sh(["qbittorrent-nox", "--help"]).stdout or ""
+    return " --confirm-legal-notice" if "--confirm-legal-notice" in out else ""
+
+
 def start_qbit():
     if qbit_ok():
         print("  qBittorrent  ja no ar")
         return True
     sh(["pkill", "-x", "qbittorrent-nox"])
     time.sleep(3)
-    # --confirm-legal-notice: numa instalacao nova o qBittorrent exige aceitar o
-    # aviso legal no terminal antes de subir. Sem isso ele le stdin, ve EOF (nao
-    # ha tty) e morre — a stack nunca sobe sozinha na primeira vez.
-    sh(["su", "-", PLEX_USER, "-c",
-        "qbittorrent-nox --daemon --confirm-legal-notice"])
+    sh(["su", "-", PLEX_USER, "-c", "qbittorrent-nox --daemon" + _qb_legal_flag()])
     for i in range(1, 16):
         if qbit_ok():
             print(f"  qBittorrent  iniciado ({i}s)")

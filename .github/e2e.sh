@@ -26,8 +26,7 @@ diagnostico() {
     echo "--- processos da stack ---"
     pgrep -a -f 'qbittorrent-nox|Plex Media Server|cloudflared' || echo "(nenhum)"
     echo "--- qbittorrent-nox em primeiro plano (5s) ---"
-    timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox --confirm-legal-notice' 2>&1 \
-      | tail -20 || true
+    timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox' 2>&1 | tail -20 || true
     echo "--- login pela Web API, resposta crua ---"
     curl -s -i --max-time 10 -H "Referer: http://127.0.0.1:8081" \
          -d "username=$QB_USER&password=$QB_PASS" \
