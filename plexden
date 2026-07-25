@@ -900,10 +900,14 @@ def _plex_install_file(mgr, fam, path):
 
 def cmd_update(args):
     require_root("update")
+    # O token NAO e obrigatorio: o endpoint publico entrega o pacote do canal
+    # estavel sem ele — e o provision.sh sempre baixou assim. Exigi-lo aqui
+    # bloqueava o update num servidor ainda nao reivindicado, sem motivo. Ele
+    # segue sendo usado quando existe, que e o que da acesso a canais de Plex
+    # Pass em vez do publico.
     token = plex_token()
     if not token:
-        print("ERRO: PlexOnlineToken nao encontrado — servidor claimado?")
-        return 1
+        print("(sem PlexOnlineToken — usando o canal publico)")
 
     mgr = _detect_pkg()
     fam = _pkg_family(mgr) if mgr else None
@@ -940,7 +944,9 @@ def cmd_update(args):
     pkgfile = f"/tmp/plex-new.{ext}"
     print(f"== Baixando .{ext} ({build}) ==")
     url = (f"https://plex.tv/downloads/latest/5?channel=16&build={build}"
-           f"&distro={distro}&X-Plex-Token={token}")
+           f"&distro={distro}")
+    if token:
+        url += f"&X-Plex-Token={token}"
     if sh(["curl", "-sL", "--max-time", "600", "-o", pkgfile, url]).returncode != 0:
         print("ERRO: download falhou")
         return 1
