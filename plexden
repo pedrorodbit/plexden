@@ -270,7 +270,11 @@ def start_qbit():
         return True
     sh(["pkill", "-x", "qbittorrent-nox"])
     time.sleep(3)
-    sh(["su", "-", PLEX_USER, "-c", "qbittorrent-nox --daemon"])
+    # --confirm-legal-notice: numa instalacao nova o qBittorrent exige aceitar o
+    # aviso legal no terminal antes de subir. Sem isso ele le stdin, ve EOF (nao
+    # ha tty) e morre — a stack nunca sobe sozinha na primeira vez.
+    sh(["su", "-", PLEX_USER, "-c",
+        "qbittorrent-nox --daemon --confirm-legal-notice"])
     for i in range(1, 16):
         if qbit_ok():
             print(f"  qBittorrent  iniciado ({i}s)")

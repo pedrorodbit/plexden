@@ -251,6 +251,9 @@ if [ ! -f "$QBCONF" ]; then
 enabled=true
 program=/usr/local/bin/plexden postprocess "%N" "%F"
 
+[LegalNotice]
+Accepted=true
+
 [BitTorrent]
 Session\\DefaultSavePath=$PERSIST/torrents/complete
 Session\\TempPath=$PERSIST/torrents/incomplete
@@ -404,7 +407,7 @@ log "== Subindo servicos =="
 if [ -x /usr/local/bin/plex-stack-start ]; then
     /usr/local/bin/plex-stack-start
 else
-    su - "$PLEX_USER" -c "qbittorrent-nox --daemon"
+    su - "$PLEX_USER" -c "qbittorrent-nox --daemon --confirm-legal-notice"
     [ -x /etc/init.d/plexmediaserver ] && /etc/init.d/plexmediaserver start
     [ -x /etc/init.d/cloudflared ]     && /etc/init.d/cloudflared start
 fi
