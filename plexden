@@ -351,9 +351,11 @@ def do_status():
         free = st.f_bavail * st.f_frsize
         used_pct = int(round((total - free) * 100 / total)) if total else 0
         gb = lambda b: f"{b / (1024**3):.0f}G"
-        print(f"    {gb(free)} livres de {gb(total)} ({used_pct}% usado)")
+        print(f"    {PERSIST}: {gb(free)} livres de {gb(total)} ({used_pct}% usado)")
     except OSError:
-        pass
+        # Caminho inexistente/inacessivel: dizer isso, em vez de deixar o
+        # cabecalho vazio (e o que acontece antes da stack ser instalada).
+        print(f"    {PERSIST}: nao encontrado — rode o provision.sh")
     return 0
 
 

@@ -1,12 +1,14 @@
 #!/bin/bash
 #
-# Provisiona Plex + qBittorrent + Cloudflare Tunnel neste container.
+# Provisiona Plex + qBittorrent + Cloudflare Tunnel nesta maquina.
 #
 # Idempotente: pode rodar quantas vezes precisar. Tudo que importa (banco do
-# Plex, midia, credenciais do tunnel) vive em /var/www/html/plex, que e um
-# bind mount do disco do host — o resto do container e overlay e some.
+# Plex, midia, credenciais do tunnel) vive em $PLEXDEN_HOME — de preferencia um
+# volume que persista (num container, um bind mount do disco do host; o resto
+# do container e overlay e some).
 #
-#   sudo /var/www/html/plex/provision.sh
+#   sudo $PLEXDEN_HOME/provision.sh
+#   sudo ./provision.sh --check      # dry-run: so detecta e valida
 #
 set -u
 
