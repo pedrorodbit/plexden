@@ -66,8 +66,12 @@ instalar nada: `./provision.sh --check`.
 O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais, puxa
 as dependências
 (`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
-pastas e sobe o que consegue. No fim, ele te mostra o que falta fazer à mão —
-que são justamente as coisas que **não** cabem num repositório público.
+pastas e sobe os serviços. No fim, ele te mostra o que falta fazer à mão — que
+são justamente as coisas que **não** cabem num repositório público.
+
+Se o Plex ou a WebUI do qBittorrent não responderem ao final, o instalador
+**para com erro** e aponta o log, em vez de anunciar sucesso sobre uma stack que
+não subiu. O túnel não conta: ele é opcional e a ausência dele é normal.
 
 ## Distros suportadas
 

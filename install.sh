@@ -78,7 +78,7 @@ cat <<EOF
       sudo ${PLEXDEN_HOME}/provision.sh
 
  Comandos:
-      sudo plexden services status
+      plexden services status
       plexden qb list
 ============================================================================
 EOF
