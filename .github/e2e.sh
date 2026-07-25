@@ -28,8 +28,16 @@ diagnostico() {
     echo "--- qbittorrent-nox em primeiro plano (5s) ---"
     timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox --confirm-legal-notice' 2>&1 \
       | tail -20 || true
-    echo "--- journal do qbittorrent, se houver ---"
-    journalctl -n 20 --no-pager 2>/dev/null | tail -20 || echo "(sem journal)"
+    echo "--- login pela Web API, resposta crua ---"
+    curl -s -i --max-time 10 -H "Referer: http://127.0.0.1:8081" \
+         -d "username=$QB_USER&password=$QB_PASS" \
+         "$QB/auth/login" 2>&1 | head -20 || true
+    echo "--- versao da Web API ---"
+    curl -s --max-time 10 "$QB/app/webapiVersion" || true; echo
+    echo "--- [Preferences] do qBittorrent.conf ---"
+    grep -A15 '\[Preferences\]' \
+      "/home/$PLEX_USER/.config/qBittorrent/qBittorrent.conf" 2>/dev/null \
+      | sed 's/\(Password_PBKDF2=\).*/\1<omitido>/' | head -15 || true
 }
 fail() { echo "FALHOU: $*" >&2; diagnostico >&2; exit 1; }
 
@@ -92,7 +100,8 @@ bash "$PERSIST/provision.sh"
 grep -qx "QB_USER=$QB_USER" "/home/$PLEX_USER/.qbcreds" || fail ".qbcreds nao regenerado"
 grep -q 'WebUI\\Password_PBKDF2=' \
     "/home/$PLEX_USER/.config/qBittorrent/qBittorrent.conf" || fail "senha nao sedeada"
-su - "$PLEX_USER" -c 'plexden qb list'    # o que importa: a senha autentica
+# o que importa: a senha sedeada realmente autentica
+su - "$PLEX_USER" -c 'plexden qb list' || fail "'plexden qb list' nao autenticou"
 
 # --------------------------------------------------------------------------
 # O qB 5.0 (Web API 2.11) renomeou pause->stop e resume->start, e o plexden
