@@ -141,7 +141,7 @@ jobs:
           - image: fedora:latest
             deps: dnf -y install systemd procps-ng && dnf clean all
           - image: opensuse/leap:latest
-            deps: zypper -n --gpg-auto-import-keys refresh && zypper -n install systemd procps-ng && zypper clean -a
+            deps: zypper -n --gpg-auto-import-keys refresh && zypper -n install systemd procps && zypper clean -a
     steps:
       - uses: actions/checkout@v5
 
