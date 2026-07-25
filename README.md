@@ -9,7 +9,9 @@ linha de comando (`curl`, `pgrep`, `su` e afins).
 
 Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde o
 PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
-container minimalista, por exemplo). Ele dá conta disso. Mas não se limita a esse
+container minimalista, por exemplo). Ele dá conta disso — na família Debian; nas
+famílias RPM o próprio pacote do Plex se recusa a instalar sem systemd, e isso
+está detalhado em [distros suportadas](#distros-suportadas). Mas não se limita a esse
 cenário: num Linux comum, com systemd, também roda de boa — e aí você pode deixar
 o systemd cuidar do autostart. O `plexden services` gerencia os três serviços em
 qualquer caso — inclusive o cloudflared, detectando sozinho se ele roda via
@@ -52,21 +54,28 @@ toda parte; o que muda é como o Plex chega.
 | Família | Distros | Gerenciador | Plex | CI |
 |---|---|---|---|---|
 | Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | ✅ **instalação completa** |
-| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | ✅ Fedora + Alma (dry-run) |
-| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ openSUSE Leap (dry-run) |
+| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | ✅ **instalação completa** (Fedora) |
+| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ dry-run |
 | Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ dry-run |
 
 São dois níveis de teste, e a diferença importa:
 
-- **Instalação completa** (hoje, Debian) — cada push instala a stack do zero num
-  container: baixa tudo, sobe os serviços e confere que o Plex responde em
+- **Instalação completa** (Debian e Fedora) — cada push instala a stack do zero
+  num container: baixa tudo, sobe os serviços e confere que o Plex responde em
   `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com a
-  senha gerada, e que o `postprocess` cria hardlink de verdade na biblioteca.
-- **Dry-run** (as demais) — roda o `provision.sh --check`, que confere que o
-  gerenciador certo foi detectado e que o `plexden` compila sob o Python de lá.
-  Valida detecção e sintaxe, não a instalação em si.
+  senha gerada, que `pause`/`resume` de fato mudam o estado do torrent, e que o
+  `postprocess` cria hardlink de verdade na biblioteca.
+- **Dry-run** (SUSE, Arch, AlmaLinux) — roda o `provision.sh --check`, que
+  confere que o gerenciador certo foi detectado e que o `plexden` compila sob o
+  Python de lá. Valida detecção e sintaxe, não a instalação em si.
 
-Três ressalvas honestas:
+Quatro ressalvas honestas:
+
+- **Nas famílias RPM, o Plex exige systemd.** Não é escolha nossa: o `.rpm` do
+  Plex tem um scriptlet que aborta a instalação com *"Plex Media Server requires
+  systemd"*. O `.deb` não faz essa checagem — por isso a promessa de rodar num
+  sistema sem init vale para a família Debian, e não para a RPM. Num Fedora ou
+  RHEL normal (que têm systemd) não muda nada.
 
 - **O Plex vem do pacote oficial, não do repositório.** O instalador ainda tenta
   configurar o repositório do Plex primeiro, mas ele anda quebrado: desde

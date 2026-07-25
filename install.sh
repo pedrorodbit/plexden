@@ -46,7 +46,7 @@ ensure_curl() {
 }
 ensure_curl
 
-echo "== Baixando plexden + provision.sh de ${REPO}@${BRANCH} =="
+echo "== Baixando plexden + provision.sh de ${RAW} =="
 mkdir -p "${PLEXDEN_HOME}/scripts"
 curl -fsSL "${RAW}/plexden"                -o "${PLEXDEN_HOME}/scripts/plexden"
 curl -fsSL "${RAW}/provision.sh"           -o "${PLEXDEN_HOME}/provision.sh"
