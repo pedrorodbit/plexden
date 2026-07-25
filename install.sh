@@ -9,6 +9,9 @@
 #   PLEXDEN_USER   usuario que roda os servicos      (default plex)
 #   PLEXDEN_REPO   owner/repo no GitHub              (default pedrorodbit/plexden)
 #   PLEXDEN_BRANCH branch                            (default main)
+#   PLEXDEN_RAW    origem dos arquivos               (default raw.githubusercontent)
+#                  aceita qualquer coisa que o curl entenda, inclusive file://
+#                  — util para instalar de um clone local ou de um espelho.
 #
 #   curl -fsSL .../install.sh | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
 #
@@ -16,7 +19,7 @@ set -euo pipefail
 
 REPO="${PLEXDEN_REPO:-pedrorodbit/plexden}"
 BRANCH="${PLEXDEN_BRANCH:-main}"
-RAW="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+RAW="${PLEXDEN_RAW:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
 PLEXDEN_HOME="${PLEXDEN_HOME:-/srv/plexden}"
 PLEXDEN_USER="${PLEXDEN_USER:-plex}"
 
