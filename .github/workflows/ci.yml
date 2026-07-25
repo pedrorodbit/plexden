@@ -82,22 +82,42 @@ jobs:
 
   # ----------------------------------------------------------------- e2e ---
   # Instalacao de verdade, ponta a ponta: roda o install.sh completo num
-  # container Debian descartavel — ele baixa os arquivos deste branch, instala
-  # Plex + qBittorrent + cloudflared, sobe os servicos e a stack e' exercitada
-  # (login na WebUI, hardlink da biblioteca). E o unico job que muta o sistema.
+  # container descartavel — ele instala Plex + qBittorrent + cloudflared, sobe
+  # os servicos e a stack e' exercitada (login na WebUI, pause/resume, hardlink
+  # da biblioteca). E o unico job que muta o sistema.
+  #
+  # Duas familias, porque o Plex chega por caminhos diferentes: no Debian pelo
+  # repo apt (com fallback para o pacote oficial) e no Fedora pelo .repo rpm
+  # (idem). O ramo rpm nunca tinha rodado.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:stable-slim
+          - image: fedora:latest
     container:
-      image: debian:stable-slim
+      image: ${{ matrix.image }}
     steps:
-      # De proposito NAO instalamos curl: o install.sh tem que se virar sozinho
-      # (ensure_curl) — esse caminho tambem faz parte do teste.
-      - name: Dependencias do checkout (sem curl)
+      - name: Dependencias do checkout
         run: |
-          apt-get update -qq
-          apt-get install -y -qq git ca-certificates
-          ! command -v curl || { echo "curl ja existe: ensure_curl nao seria testado"; exit 1; }
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq git ca-certificates
+          else
+            dnf install -y -q git ca-certificates
+          fi
+          # A imagem do Debian nao traz curl, entao la o ensure_curl() do
+          # install.sh e' exercitado de verdade. A do Fedora traz curl-minimal e
+          # arrancar isso levaria o dnf junto — nessa familia o caminho fica sem
+          # cobertura, e dizer isso em voz alta e' melhor que fingir que cobre.
+          if command -v curl >/dev/null 2>&1; then
+            echo "curl ja presente — ensure_curl NAO sera exercitado aqui"
+          else
+            echo "sem curl — ensure_curl sera exercitado"
+          fi
 
       - uses: actions/checkout@v5
 
@@ -120,12 +140,17 @@ jobs:
 
       - name: Binarios, stubs e config no lugar
         run: |
+          # dpkg ou rpm, conforme a familia
+          pkg_has() {
+            if command -v dpkg >/dev/null 2>&1; then dpkg -s "$1" >/dev/null 2>&1
+            else rpm -q "$1" >/dev/null 2>&1; fi
+          }
           set -x
-          command -v curl                       # ensure_curl funcionou
+          command -v curl                       # instalado ou ja presente
           command -v plexden
           cloudflared --version                 # binario estatico baixado e +x
-          dpkg -s plexmediaserver  >/dev/null   # repo apt assinado do Plex
-          dpkg -s qbittorrent-nox  >/dev/null
+          pkg_has plexmediaserver               # repo do Plex ou pacote oficial
+          pkg_has qbittorrent-nox
           id plex
           test -x /etc/init.d/plexmediaserver
           test -x /usr/local/bin/plex-stack-start
@@ -166,6 +191,69 @@ jobs:
           grep -q 'WebUI\\Password_PBKDF2=' /home/plex/.config/qBittorrent/qBittorrent.conf
           # o teste que importa: a senha sedeada realmente autentica na WebUI
           su - plex -c 'plexden qb list'
+
+      # O qB 5.0 (Web API 2.11) renomeou pause->stop e resume->start, e o plexden
+      # escolhe o endpoint pela versao. Sem um torrent na lista o 'qb pause' sai
+      # cedo com "nenhum torrent" e o gate nunca e' exercitado — por isso o
+      # .torrent gerado aqui. Nao ha rede envolvida: tracker inexistente, o
+      # torrent so precisa existir.
+      - name: qb pause/resume (gate de endpoint do qB 5)
+        run: |
+          python3 - <<'PY'
+          import hashlib, os
+          data = os.urandom(262144)
+          open('/srv/plexden/torrents/complete/plexden-ci.bin', 'wb').write(data)
+          def be(o):
+              if isinstance(o, int):   return b'i%de' % o
+              if isinstance(o, bytes): return b'%d:%s' % (len(o), o)
+              if isinstance(o, dict):
+                  return b'd' + b''.join(be(k) + be(v)
+                                         for k, v in sorted(o.items())) + b'e'
+              raise TypeError(o)
+          torrent = {
+              b'announce': b'http://127.0.0.1:6969/announce',
+              b'info': {b'name': b'plexden-ci.bin', b'piece length': 262144,
+                        b'pieces': hashlib.sha1(data).digest(),
+                        b'length': len(data)},
+          }
+          open('/tmp/ci.torrent', 'wb').write(be(torrent))
+          PY
+          chown plex:plex /srv/plexden/torrents/complete/plexden-ci.bin
+
+          Q=http://127.0.0.1:8081/api/v2
+          J=/tmp/qb.cookie
+          curl -s -c $J -d 'username=citest&password=senha-do-ci-123' "$Q/auth/login" | grep -q Ok
+          curl -s -b $J -F 'torrents=@/tmp/ci.torrent' -F 'skip_checking=true' \
+               -F 'savepath=/srv/plexden/torrents/complete' "$Q/torrents/add" | grep -q Ok
+
+          state() { curl -s -b $J "$Q/torrents/info" \
+                    | python3 -c 'import json,sys; t=json.load(sys.stdin); print(t[0]["state"] if t else "")'; }
+          for _ in $(seq 1 20); do [ -n "$(state)" ] && break; sleep 1; done
+          [ -n "$(state)" ] || { echo "o torrent nao entrou na lista"; exit 1; }
+          echo "  estado inicial: $(state)"
+
+          # 'qb pause' agora devolve codigo != 0 se a Web API recusar o endpoint,
+          # mas quem manda e o estado do torrent — e ele que o usuario ve.
+          su - plex -c 'plexden qb pause'
+          for _ in $(seq 1 20); do
+            case "$(state)" in stopped*|paused*) break ;; esac; sleep 1
+          done
+          case "$(state)" in
+            stopped*|paused*) echo "  pausado: $(state)" ;;
+            *) echo "  qb pause nao pausou (estado: $(state))"; exit 1 ;;
+          esac
+
+          su - plex -c 'plexden qb resume'
+          for _ in $(seq 1 20); do
+            case "$(state)" in stopped*|paused*) sleep 1 ;; *) break ;; esac
+          done
+          case "$(state)" in
+            stopped*|paused*) echo "  qb resume nao retomou (estado: $(state))"; exit 1 ;;
+            *) echo "  retomado: $(state)" ;;
+          esac
+
+          curl -s -b $J -d 'hashes=all&deleteFiles=false' "$Q/torrents/delete" >/dev/null
+          rm -f /srv/plexden/torrents/complete/plexden-ci.bin
 
       - name: postprocess cria hardlink na biblioteca
         run: |
