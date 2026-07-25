@@ -44,6 +44,136 @@ if [ "$CHECK" = 0 ]; then
       log "AVISO: $PERSIST nao aparece como mount — confirme que persiste!"
 fi
 
+# ============================================================ diagnostico ===
+# Roda antes de tocar em qualquer coisa: diz em que pe o CI esta em relacao a
+# este SO e o que esperar deste hardware. Nada aqui bloqueia a instalacao —
+# informa e segue.
+
+_osrel() {   # $1 = campo do /etc/os-release
+    [ -r /etc/os-release ] || return 1
+    sed -n "s/^$1=//p" /etc/os-release | tr -d '"' | head -1
+}
+
+# Espelha a matriz do .github/workflows/ci.yml. Se um dia entrar imagem nova la,
+# esta tabela precisa acompanhar — o job 'distros' confere que os dois batem.
+cobertura_so() {
+    id=$(_osrel ID || echo desconhecido)
+    pretty=$(_osrel PRETTY_NAME || echo "SO nao identificado")
+    ver=$(_osrel VERSION_ID || echo "")
+    like=$(_osrel ID_LIKE || echo "")
+
+    log "  SO: $pretty"
+    case "$id" in
+        debian)
+            log "  NIVEL: completo — o CI instala a stack inteira em debian:stable-slim a cada push" ;;
+        ubuntu)
+            if [ "$ver" = "24.04" ]; then
+                log "  NIVEL: completo — o CI instala a stack inteira em ubuntu:24.04 a cada push"
+            else
+                log "  NIVEL: parcial — o CI testa o Ubuntu 24.04, nao o $ver."
+                log "         Mesmo caminho de codigo, mas esta versao nao e exercitada."
+            fi ;;
+        fedora)
+            log "  NIVEL: completo — o CI instala a stack inteira em fedora:latest a cada push" ;;
+        opensuse-leap)
+            log "  NIVEL: completo — o CI instala a stack inteira em opensuse/leap a cada push" ;;
+        arch|almalinux)
+            log "  NIVEL: parcial — o CI so roda o dry-run aqui (deteccao e sintaxe)."
+            log "         A instalacao em si nunca foi exercitada nesta distro." ;;
+        *)
+            # Nao esta na matriz: vale pelo parentesco, e so.
+            case " $like " in
+                *debian*|*ubuntu*)
+                    log "  NIVEL: por parentesco — familia Debian, testada via Debian stable e Ubuntu 24.04" ;;
+                *rhel*|*fedora*|*centos*)
+                    log "  NIVEL: por parentesco — familia RPM, testada via Fedora" ;;
+                *suse*)
+                    log "  NIVEL: por parentesco — familia SUSE, testada via openSUSE Leap" ;;
+                *arch*)
+                    log "  NIVEL: por parentesco — familia Arch, e o Arch so tem dry-run" ;;
+                *)
+                    log "  NIVEL: nenhum — este SO nao aparece em lugar nenhum do CI."
+                    log "         Se o gerenciador de pacotes for detectado abaixo, deve funcionar," ;;
+            esac
+            log "         mas ninguem instalou a stack aqui. Reporte como for." ;;
+    esac
+}
+
+# Divide KiB por 1 GiB devolvendo uma casa decimal, sem depender de awk/python
+# (que podem nem estar instalados quando isto roda).
+_gb() { echo "$(( $1 / 1048576 )).$(( ($1 % 1048576) * 10 / 1048576 ))"; }
+
+_livre_kb() {   # espaco livre no ancestral existente mais proximo de $1
+    d=$1
+    while [ ! -d "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
+    df -Pk "$d" 2>/dev/null | tail -1 | {
+        read -r _ _ _ livre _ && echo "${livre:-0}" || echo 0
+    }
+}
+
+# Veredito honesto: mede o que da para medir (nucleos, RAM, disco) e diz em voz
+# alta o que NAO da (velocidade de transcodificacao depende do modelo da CPU,
+# nao da contagem de nucleos).
+avaliar_maquina() {
+    nucleos=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)
+    modelo=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -1)
+    [ -z "$modelo" ] && modelo=$(sed -n 's/^Model[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -1)
+    [ -z "$modelo" ] && modelo=$(uname -m)
+    mem_kb=$(sed -n 's/^MemTotal:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo 2>/dev/null || echo 0)
+    mem_mb=$(( mem_kb / 1024 ))
+    livre_kb=$(_livre_kb "$PERSIST")
+    livre_gb=$(( livre_kb / 1048576 ))
+
+    log "  CPU:     $nucleos nucleo(s) — $modelo"
+    log "  Memoria: $(_gb "$mem_kb") GB"
+    log "  Disco:   $(_gb "$livre_kb") GB livres para $PERSIST"
+
+    # 0 = folga, 1 = da conta, 2 = no limite. Vale o pior dos tres.
+    nota=0
+    avisos=()
+    if [ "$mem_mb" -lt 1500 ]; then
+        nota=2
+        avisos+=("menos de 1,5 GB de RAM: o Plex pode ser morto pelo OOM ao varrer bibliotecas grandes")
+    elif [ "$mem_mb" -lt 3000 ]; then
+        [ "$nota" -lt 1 ] && nota=1
+        avisos+=("RAM entre 1,5 e 3 GB: da para reproducao direta, aperta se transcodificar")
+    fi
+    if [ "$nucleos" -le 1 ]; then
+        nota=2
+        avisos+=("1 nucleo: conte com reproducao direta apenas")
+    elif [ "$nucleos" -lt 4 ]; then
+        [ "$nota" -lt 1 ] && nota=1
+        avisos+=("menos de 4 nucleos: um transcode 1080p por vez, no maximo")
+    fi
+    if [ "$livre_gb" -lt 20 ]; then
+        nota=2
+        avisos+=("menos de 20 GB livres: biblioteca de midia enche isso rapido")
+    elif [ "$livre_gb" -lt 100 ]; then
+        [ "$nota" -lt 1 ] && nota=1
+        avisos+=("menos de 100 GB livres: da para comecar, planeje o crescimento")
+    fi
+    case "$(uname -m)" in
+        x86_64|amd64) ;;
+        *) [ "$nota" -lt 1 ] && nota=1
+           avisos+=("arquitetura $(uname -m): transcodificacao por software costuma ser inviavel aqui") ;;
+    esac
+
+    case "$nota" in
+        0) log "  VEREDITO: roda com folga" ;;
+        1) log "  VEREDITO: da conta" ;;
+        2) log "  VEREDITO: no limite" ;;
+    esac
+    for a in ${avisos[@]+"${avisos[@]}"}; do log "            - $a"; done
+    log "         Isto olha nucleos, RAM e disco. A velocidade de transcodificacao"
+    log "         depende do modelo da CPU, que nenhum numero aqui mede — o"
+    log "         veredito vale para reproducao direta e para a biblioteca."
+}
+
+log "== Cobertura de teste deste SO =="
+cobertura_so
+log "== Este computador =="
+avaliar_maquina
+
 # ------------------------------------------------- gerenciador de pacotes ---
 # Camada fina sobre o gerenciador da distro. So o bootstrap (este script) e o
 # 'plexden update' dependem disto; o resto do plexden e' agnostico.
