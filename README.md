@@ -38,6 +38,31 @@ curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh
   | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
 ```
 
+Antes de tocar em qualquer coisa, ele te diz duas coisas — e nenhuma delas
+impede a instalação, só informa:
+
+```
+== Cobertura de teste deste SO ==
+  SO: Ubuntu 22.04.5 LTS
+  NIVEL: parcial — o CI testa o Ubuntu 24.04, nao o 22.04.
+         Mesmo caminho de codigo, mas esta versao nao e exercitada.
+== Este computador ==
+  CPU:     2 nucleo(s) — Intel(R) Xeon(R) Platinum 8488C
+  Memoria: 2.0 GB
+  Disco:   60.0 GB livres para /srv/plexden
+  VEREDITO: da conta
+            - RAM entre 1,5 e 3 GB: da para reproducao direta, aperta se transcodificar
+            - menos de 4 nucleos: um transcode 1080p por vez, no maximo
+```
+
+O **nível** diz o quanto o CI exercita o seu sistema: `completo` (instalação
+inteira a cada push), `parcial` (só dry-run, ou versão diferente da testada),
+`por parentesco` (a família é testada, sua distro não) ou `nenhum`. O
+**veredito** é `roda com folga`, `dá conta` ou `no limite`, com o motivo de cada
+ressalva — e ele mede núcleos, RAM e disco, não velocidade de transcodificação,
+que depende do modelo da CPU e nenhum número ali captura. Para só ver isso, sem
+instalar nada: `./provision.sh --check`.
+
 O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais, puxa
 as dependências
 (`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
