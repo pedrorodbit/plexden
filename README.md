@@ -38,7 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh
   | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
 ```
 
-O instalador baixa o `plexden` e o `provision.sh`, puxa as dependências
+O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais, puxa
+as dependências
 (`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
 pastas e sobe o que consegue. No fim, ele te mostra o que falta fazer à mão —
 que são justamente as coisas que **não** cabem num repositório público.
@@ -76,11 +77,13 @@ São dois níveis de teste, e a diferença importa:
   série **4.x** do qBittorrent, enquanto as outras três trazem a **5.x**. Como o
   qB 5 renomeou os endpoints de `pause`/`resume` para `stop`/`start`, é ele que
   garante que o lado antigo desse desvio também é exercitado a cada push.
-- **Dry-run** — `archlinux:latest` e `almalinux:9`. Roda o `provision.sh --check`,
-  que confere que o gerenciador certo foi detectado e que o `plexden` compila sob
-  o Python de lá. Valida detecção e sintaxe, não a instalação em si — foi
-  justamente uma instalação de verdade que revelou que o openSUSE chama `procps`
-  o que o Fedora chama `procps-ng`.
+- **Dry-run** — o `provision.sh --check` roda em cinco imagens
+  (`debian:stable-slim`, `fedora:latest`, `almalinux:9`, `opensuse/leap:latest`,
+  `archlinux:latest`) e confere que o gerenciador certo foi detectado e que o
+  `plexden` compila sob o Python de lá. Para **Arch e AlmaLinux esse é o único
+  nível**: valida detecção e sintaxe, não a instalação em si — foi justamente uma
+  instalação de verdade que revelou que o openSUSE chama `procps` o que o Fedora
+  chama `procps-ng`.
 
 Quatro ressalvas honestas:
 
@@ -90,13 +93,24 @@ Quatro ressalvas honestas:
   rodar num sistema sem init vale para a família Debian, e não para RPM nem
   SUSE. Num Fedora, RHEL ou openSUSE normal (que têm systemd) não muda nada.
 
-- **O Plex vem do pacote oficial, não do repositório.** O instalador ainda tenta
-  configurar o repositório do Plex primeiro, mas ele anda quebrado: desde
-  fevereiro de 2026 o apt do Debian 13+ verifica assinaturas com o Sequoia, que
-  recusa a chave do Plex (a assinatura de vínculo dela é SHA1). Quando isso
-  acontece, o instalador remove a entrada de repositório (senão todos os seus
-  `apt update` passariam a dar erro) e baixa o pacote oficial direto. Efeito
-  colateral: o Plex não é atualizado pelo `apt upgrade`; use o `plexden update`.
+- **O repositório do Plex nem sempre é aceito — e aí entra o pacote oficial.** O
+  instalador tenta o repositório primeiro, que é o caminho preferido (deixa o
+  `apt`/`dnf upgrade` cuidar das atualizações). Mas desde fevereiro de 2026 o
+  apt do Debian 13+ verifica assinaturas com o Sequoia, que recusa a chave do
+  Plex porque a assinatura de vínculo dela é SHA1. O que acontece em cada distro
+  do CI:
+
+  | Distro | Repositório do Plex |
+  |---|---|
+  | Debian stable | ❌ recusado → cai no pacote oficial |
+  | Ubuntu LTS | ✅ funciona |
+  | Fedora | ✅ funciona |
+  | openSUSE Leap | ✅ funciona |
+
+  Quando o repositório é recusado, o instalador **remove a entrada** — senão
+  todos os seus `apt update` passariam a dar erro daí em diante — e baixa o
+  pacote oficial direto. Só nesse caso o Plex deixa de ser atualizado pelo
+  `apt upgrade`; aí use o `plexden update`.
 - **Arch** — o Plex não tem pacote oficial. O instalador prepara tudo e te manda
   instalar pelo AUR (ex.: `yay -S plex-media-server`); depois é só rodar o
   `provision.sh` de novo. O `plexden update`, no Arch, também aponta pro AUR em
@@ -132,7 +146,8 @@ O que você faz depois de instalar:
 ## O dia a dia
 
 ```bash
-sudo plexden services {start|stop|restart|status|watch [segundos]}
+sudo plexden services {start|stop|restart|watch [segundos]}
+plexden services status                      # só leitura: dispensa root
 plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
 plexden postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
 sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
@@ -151,8 +166,9 @@ O que cada um faz:
   tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
   `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
   mesma pasta em vez de virarem dez séries soltas.
-- **`update`** — o repositório da distro costuma ficar atrás no Plex, então este
-  comando baixa o pacote oficial mais novo (`.deb` ou `.rpm`, conforme a família;
+- **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
+  nova do Plex (e em algumas distros nem há repositório utilizável), então este
+  comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família;
   no Arch, aponta pro AUR), faz backup do banco e reinstala.
 
 ## Ajustando ao seu setup
