@@ -26,8 +26,7 @@ diagnostico() {
     echo "--- processos da stack ---"
     pgrep -a -f 'qbittorrent-nox|Plex Media Server|cloudflared' || echo "(nenhum)"
     echo "--- qbittorrent-nox em primeiro plano (5s) ---"
-    timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox --confirm-legal-notice' 2>&1 \
-      | tail -20 || true
+    timeout 5 su - "$PLEX_USER" -c 'qbittorrent-nox' 2>&1 | tail -20 || true
     echo "--- login pela Web API, resposta crua ---"
     curl -s -i --max-time 10 -H "Referer: http://127.0.0.1:8081" \
          -d "username=$QB_USER&password=$QB_PASS" \
@@ -144,6 +143,16 @@ state() {
 }
 for _ in $(seq 1 20); do [ -n "$(state)" ] && break; sleep 1; done
 [ -n "$(state)" ] || fail "o torrent nao entrou na lista"
+# Deixa visivel no log qual lado do gate esta sendo exercitado: >= 2.11 usa
+# stop/start (qB 5), abaixo disso usa pause/resume (qB 4).
+api=$(curl -s -b $COOKIE "$QB/app/webapiVersion")
+# Comparacao numerica, igual a do plexden: em shell "2.9" > "2.11" como texto,
+# e o rotulo sairia trocado justo no caso que interessa.
+endp=$(python3 -c "import sys
+v = tuple(int(x) for x in sys.argv[1].split('.'))
+print('stop/start' if v >= (2, 11) else 'pause/resume')" "$api")
+su - "$PLEX_USER" -c 'qbittorrent-nox --version' 2>/dev/null | tail -1 | sed 's/^/  /'
+echo "  Web API $api -> endpoints $endp"
 echo "  estado inicial: $(state)"
 
 su - "$PLEX_USER" -c 'plexden qb pause'

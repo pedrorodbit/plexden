@@ -473,7 +473,12 @@ log "== Subindo servicos =="
 if [ -x /usr/local/bin/plex-stack-start ]; then
     /usr/local/bin/plex-stack-start
 else
-    su - "$PLEX_USER" -c "qbittorrent-nox --daemon --confirm-legal-notice"
+    # A flag so existe a partir do qB 5; na serie 4.x o binario recusa e nem
+    # sobe. La o aceite vem do [LegalNotice] gravado no qBittorrent.conf.
+    QB_LEGAL=""
+    qbittorrent-nox --help 2>&1 | grep -q -- --confirm-legal-notice \
+      && QB_LEGAL=" --confirm-legal-notice"
+    su - "$PLEX_USER" -c "qbittorrent-nox --daemon$QB_LEGAL"
     [ -x /etc/init.d/plexmediaserver ] && /etc/init.d/plexmediaserver start
     [ -x /etc/init.d/cloudflared ]     && /etc/init.d/cloudflared start
 fi
