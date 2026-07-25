@@ -219,7 +219,11 @@ O que cada um faz:
   em `~/.qbcreds`). Listar, pausar, retomar, mover — sem abrir o navegador.
 - **`postprocess`** — quando um download termina, decide se é filme ou série e
   cria um **hardlink** na biblioteca (sem duplicar espaço, e o torrent continua
-  semeando do arquivo original). Séries são agrupadas por show e temporada
+  semeando do arquivo original). Uma ressalva que importa: hardlink não cruza
+  sistema de arquivos, então se `torrents/` e a biblioteca ficarem em discos
+  diferentes ele **copia** — e aí o espaço é duplicado de verdade. O log em
+  `logs/autorun.log` diz qual dos dois aconteceu. Mantenha os dois no mesmo
+  volume e o problema não existe. Séries são agrupadas por show e temporada
   tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
   `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
   mesma pasta em vez de virarem dez séries soltas.
