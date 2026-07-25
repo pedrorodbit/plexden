@@ -12,7 +12,7 @@ pacote via pip).
   plexden services status                                     (dispensa root)
   plexden qb {list|paths|pause|resume|setlocation} ...
   plexden postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
-  plexden links [--apply]                                     (limpa a biblioteca)
+  plexden links [--scan] [--apply]                            (limpa a biblioteca)
   plexden update                                              (root)
   plexden plex-exec                                           (entrypoint do Plex)
   plexden _init {start|stop|status|restart}                  (stub SysV)
@@ -70,6 +70,7 @@ AUTORUN_LOG = os.path.join(LOGDIR, "autorun.log")
 PREFS = os.path.join(PERSIST, "config", "Plex Media Server", "Preferences.xml")
 SCRIPTS_DIR = os.path.join(PERSIST, "scripts")
 LINKS_DB = os.path.join(PERSIST, "config", "links.json")
+TORRENTS = os.path.join(PERSIST, "torrents")
 
 PLEX_URL = "http://127.0.0.1:32400"
 QB_URL = os.environ.get("QB_HOST", "http://127.0.0.1:8081")
@@ -893,6 +894,91 @@ def _poda_vazios(path, raizes):
         d = os.path.dirname(d)
 
 
+def _indice_por_inode(raiz):
+    """(dev, ino) -> primeiro caminho encontrado, para tudo debaixo de 'raiz'."""
+    idx = {}
+    for d, _, arquivos in os.walk(raiz):
+        for fn in arquivos:
+            c = os.path.join(d, fn)
+            try:
+                st = os.stat(c)
+            except OSError:                 # link quebrado, permissao, corrida
+                continue
+            idx.setdefault((st.st_dev, st.st_ino), c)
+    return idx
+
+
+def cmd_links_scan(aplica):
+    """Reconstroi a razao pelo inode, para o acervo que veio de antes dela.
+
+    Hardlink e fonte sao o mesmo inode — entao o par pode ser redescoberto sem
+    adivinhar por nome ou tamanho. E o que traz para dentro do 'plexden links'
+    a biblioteca que ja existia quando a razao foi criada.
+
+    O que nao casa fica de fora e assim permanece: um arquivo sem fonte viva
+    pode ser tanto "veio de um torrent que ja foi apagado" quanto "foi copiado
+    aqui na mao", e nao ha como distinguir os dois depois do fato. Na duvida,
+    nao se apaga — esses nunca entram na razao, logo nunca sao removidos.
+    """
+    print(f"varredura por inode em {PERSIST}")
+    fontes = _indice_por_inode(TORRENTS)
+    links = _links_load()
+    ja, adotar, sem_fonte = 0, {}, []
+    biblioteca = set()
+    for raiz in (MOVIES, SERIES):
+        for chave, dst in _indice_por_inode(raiz).items():
+            biblioteca.add(chave)
+            if dst in links:
+                ja += 1
+            elif chave in fontes:
+                adotar[dst] = {"src": fontes[chave], "modo": "link",
+                               "tamanho": _size_mb(dst), "em": now(),
+                               "origem": "scan"}
+            else:
+                sem_fonte.append(dst)
+
+    # A direcao inversa: baixado, mas nunca chegou na biblioteca. So video
+    # grande — senao a lista vira .txt, .nfo, capa e amostra do torrent.
+    nao_linkados = [c for chave, c in fontes.items()
+                    if chave not in biblioteca
+                    and c.rsplit(".", 1)[-1].lower() in VID_EXT
+                    and _size_mb(c) >= MIN_VIDEO_MB]
+
+    print(f"  ja na razao:                     {ja:4d}")
+    print(f"  fonte viva -> pode adotar:       {len(adotar):4d}")
+    print(f"  sem fonte identificavel:         {len(sem_fonte):4d}")
+    print(f"  baixado sem link na biblioteca:  {len(nao_linkados):4d}")
+
+    if sem_fonte:
+        print("\nsem fonte identificavel — ficam de fora da razao, e por isso")
+        print("nunca serao removidos pelo 'plexden links':")
+        for dst in sorted(sem_fonte)[:15]:
+            print(f"  {dst}")
+        if len(sem_fonte) > 15:
+            print(f"  ... e mais {len(sem_fonte) - 15}")
+
+    if nao_linkados:
+        print("\nbaixado mas fora da biblioteca (postprocess nao rodou ou"
+              " ignorou):")
+        for c in sorted(nao_linkados)[:15]:
+            print(f"  {c}")
+        if len(nao_linkados) > 15:
+            print(f"  ... e mais {len(nao_linkados) - 15}")
+
+    if not adotar:
+        print("\nnada novo a adotar")
+        return 0
+    if not aplica:
+        print(f"\n{len(adotar)} par(es) identificado(s) — "
+              f"'plexden links --scan --apply' grava na razao")
+        print("(a varredura nao remove nada, nem com --apply)")
+        return 0
+    _links_merge(adotar)
+    print(f"\n{len(adotar)} par(es) gravado(s) na razao — a partir de agora o")
+    print("'plexden links' acompanha esses arquivos. Nada foi removido.")
+    return 0
+
+
 def cmd_links(args):
     """Reconcilia a biblioteca com o torrents/: fonte apagada, link vai junto.
 
@@ -900,6 +986,8 @@ def cmd_links(args):
     qBittorrent removeu o torrent com os arquivos. A biblioteca acompanha.
     """
     aplica = "--apply" in args
+    if "--scan" in args:
+        return cmd_links_scan(aplica)
     links = _links_load()
     print(f"razao: {LINKS_DB}")
     if not links:
@@ -1174,6 +1262,7 @@ USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
   plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
   plexden postprocess "<nome>" "<caminho>"
   plexden links [--apply]      fonte do torrent apagada -> remove o hardlink
+  plexden links --scan [--apply]   redescobre pares por inode (nunca remove)
   plexden update                                              (root)
   plexden plex-exec
   plexden _init {start|stop|restart|status}
