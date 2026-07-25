@@ -132,7 +132,9 @@ Tier 1 do Tier 2:
   stack do zero num container: baixa tudo, sobe os serviços e confere que o Plex
   responde em `:32400`, que a WebUI do qBittorrent responde em `:8081` e
   autentica com a senha gerada, que `pause`/`resume` de fato mudam o estado do
-  torrent, e que o `postprocess` cria hardlink de verdade na biblioteca.
+  torrent, que o `postprocess` cria hardlink de verdade na biblioteca e que o
+  `links --apply` remove o hardlink cuja fonte sumiu — sem tocar num arquivo
+  colocado na biblioteca por fora.
 
   O Ubuntu está aí por um motivo além de ser derivado popular: ele empacota a
   série **4.x** do qBittorrent, enquanto as outras três trazem a **5.x**. Como o
@@ -211,6 +213,7 @@ sudo plexden services {start|stop|restart|watch [segundos]}
 plexden services status                      # só leitura: dispensa root
 plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
 plexden postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
+plexden links [--apply]                      # download apagado? tira o link da biblioteca
 sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
 ```
 
@@ -240,6 +243,27 @@ O que cada um faz:
   tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
   `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
   mesma pasta em vez de virarem dez séries soltas.
+- **`links`** — o download pode sumir a qualquer momento: você apaga para liberar
+  espaço, perde o interesse, ou o qBittorrent remove o torrent junto com os
+  arquivos. O hardlink na biblioteca sobrevive a isso (é ele que passa a segurar
+  o dado), e o Plex segue anunciando um item — que às vezes você nem quer mais.
+  Este comando reconcilia: **fonte apagada, o link vai junto**, o diretório de
+  temporada que ficou vazio é removido e o Plex recebe um pedido de rescan.
+
+  O critério é procedência, não `nlink`. Toda vez que o `postprocess` linka
+  alguma coisa, ele anota o par destino → origem em `config/links.json`; o
+  `links` só olha para o que está nessa razão. Isso é deliberado: o sinal fácil
+  seria "`st_nlink == 1`, logo ninguém mais aponta pra este arquivo", só que
+  isso descreve igualmente bem toda a mídia que você copiou para a biblioteca na
+  mão — que seria apagada por engano. **O que o `plexden` nunca linkou, o
+  `plexden` nunca remove**, e isso inclui tudo que já estava na biblioteca antes
+  de você atualizar para esta versão.
+
+  Sem `--apply` ele só lista. Duas outras decisões que valem saber: se o arquivo
+  na biblioteca não está mais onde foi registrado (você renomeou ou moveu), o
+  `plexden` **não sai caçando** — apenas esquece a entrada; e nada fora de
+  `movies/`/`series/` é removido, aconteça o que acontecer com a razão. Se quiser
+  automatizar, é uma linha de cron: `0 4 * * * plexden links --apply`.
 - **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
   nova do Plex (e em algumas distros nem há repositório utilizável), então este
   comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família;
