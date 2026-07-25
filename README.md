@@ -214,6 +214,7 @@ plexden services status                      # só leitura: dispensa root
 plexden qb {list|paths|pause [busca]|resume [busca]|setlocation <dest> [hash]}
 plexden postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama isso
 plexden links [--apply]                      # download apagado? tira o link da biblioteca
+plexden links --scan [--apply]               # redescobre pares por inode (nunca remove)
 sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
 ```
 
@@ -264,6 +265,19 @@ O que cada um faz:
   `plexden` **não sai caçando** — apenas esquece a entrada; e nada fora de
   `movies/`/`series/` é removido, aconteça o que acontecer com a razão. Se quiser
   automatizar, é uma linha de cron: `0 4 * * * plexden links --apply`.
+
+  **`links --scan`** resolve o problema de quem já tinha biblioteca antes da
+  razão existir: ela nasce vazia, então nada do acervo antigo é acompanhado.
+  A varredura redescobre os pares **pelo inode** — hardlink e fonte são o mesmo
+  inode, então o vínculo é identificável sem adivinhar por nome ou tamanho.
+  Com `--apply` ela grava os pares encontrados; **em nenhum modo ela remove
+  arquivo**. O que não casa fica de fora e assim permanece: um arquivo sem fonte
+  viva pode ser "veio de um torrent já apagado" ou "foi copiado aqui na mão", e
+  não há como distinguir depois do fato — na dúvida, não se apaga.
+
+  De quebra ela mostra a direção inversa: vídeo grande em `torrents/` que nunca
+  chegou na biblioteca, ou seja, `postprocess` que não rodou. Numa biblioteca
+  real de 140 arquivos, a varredura identificou 93 pares e deixou 47 de fora.
 - **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
   nova do Plex (e em algumas distros nem há repositório utilizável), então este
   comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família;

@@ -240,8 +240,39 @@ su - "$PLEX_USER" -c 'plexden links --apply' | sed 's/^/    /'
 ! [ -e "$PERSIST/series/The Office" ] || fail "'The Office/' vazia sobrou na biblioteca"
 [ -d "$PERSIST/series" ] || fail "a poda comeu a raiz series/"
 [ -d "$PERSIST/movies" ] || fail "a poda comeu a raiz movies/"
-rm -f "$ALHEIO"
 echo "  temporada vazia podada, raizes da biblioteca preservadas"
+
+# --------------------------------------------------------------------------
+# Quem instalou o plexden depois de ja ter biblioteca precisa de um jeito de
+# trazer o acervo antigo para dentro da razao. Hardlink e fonte sao o mesmo
+# inode, entao o par e redescobrivel — mas so o par: o que nao casa fica de
+# fora, porque "veio de um torrent apagado" e "foi copiado aqui na mao" sao
+# indistinguiveis depois do fato.
+log "links --scan (redescobre pares por inode)"
+ANTIGO="$C/Heat.1995.1080p.mkv"
+dd if=/dev/zero of="$ANTIGO" bs=1M count=120 status=none
+# linkado FORA do plexden: nao passa pelo postprocess, nao entra na razao
+ln "$ANTIGO" "$PERSIST/movies/Heat.1995.1080p.mkv"
+chown -R "$PLEX_USER:$PLEX_USER" "$C" "$PERSIST/movies"
+
+saida=$(su - "$PLEX_USER" -c 'plexden links --scan')
+printf '    %s\n' "$saida"
+echo "$saida" | grep -qE 'fonte viva -> pode adotar: +1' || fail "o --scan nao achou o par"
+echo "$saida" | grep -qE 'sem fonte identificavel: +1' \
+    || fail "o --scan deveria listar o arquivo alheio como sem procedencia"
+echo "$saida" | grep -q 'grava na razao' || fail "o --scan gravou sem --apply"
+
+su - "$PLEX_USER" -c 'plexden links --scan --apply' | sed 's/^/    /'
+[ -f "$ALHEIO" ] || fail "o --scan removeu o arquivo alheio"
+# Adotado de verdade: apagar a fonte agora tem de levar o link junto.
+rm -f "$ANTIGO"
+saida=$(su - "$PLEX_USER" -c 'plexden links --apply')
+printf '    %s\n' "$saida"
+echo "$saida" | grep -q 'removidos 1 link(s)' || fail "o adotado nao foi reconciliado"
+! [ -f "$PERSIST/movies/Heat.1995.1080p.mkv" ] || fail "o link adotado ficou"
+[ -f "$ALHEIO" ] || fail "reconciliou um arquivo que o --scan nao adotou"
+rm -f "$ALHEIO"
+echo "  par redescoberto por inode, adotado e reconciliado; alheio intacto"
 
 # --------------------------------------------------------------------------
 log "Ciclo de vida dos servicos"

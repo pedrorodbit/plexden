@@ -219,6 +219,87 @@ class TestLinks(unittest.TestCase):
                 self.p.MOVIES, "Blade.Runner.2049.2017.1080p.mkv")),
             "a midia deixou de ser linkada por causa da razao")
 
+    # -- varredura por inode (--scan) ---------------------------------------
+    def _linka_na_mao(self, nome, destino_rel):
+        """Simula o acervo anterior a razao: hardlink feito fora do plexden."""
+        src = self._video(nome)
+        dst = os.path.join(self.home, destino_rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.link(src, dst)
+        return src, dst
+
+    def test_scan_adota_quem_tem_fonte_viva(self):
+        src, dst = self._linka_na_mao("Heat.1995.1080p.mkv", "movies/Heat.1995.1080p.mkv")
+        rc, saida = self._links("--scan", "--apply")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._razao()[dst]["src"], src)
+        self.assertIn("1 par(es) gravado(s)", saida)
+
+    def test_scan_sem_apply_nao_grava(self):
+        self._linka_na_mao("Heat.1995.1080p.mkv", "movies/Heat.1995.1080p.mkv")
+        rc, saida = self._links("--scan")
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.p.LINKS_DB), "gravou sem --apply")
+        self.assertIn("grava na razao", saida)
+
+    def test_scan_ignora_quem_nao_tem_fonte(self):
+        """O caso dos 47: nlink 1, procedencia desconhecida, fica de fora."""
+        alheio = os.path.join(self.p.MOVIES, "Copiado Na Mao.mkv")
+        with open(alheio, "wb") as f:
+            f.write(b"\0" * 1024)
+        rc, saida = self._links("--scan", "--apply")
+        self.assertEqual(rc, 0)
+        self.assertIn("sem fonte identificavel:            1", saida)
+        self.assertIn(alheio, saida)                    # listado, nao adotado
+        self.assertTrue(os.path.exists(alheio))
+        self.assertFalse(os.path.exists(self.p.LINKS_DB),
+                         "adotou arquivo de procedencia desconhecida")
+
+    def test_scan_nunca_remove_nada(self):
+        """Mesmo com --apply: a varredura adota, quem remove e o outro modo."""
+        src, dst = self._linka_na_mao("Heat.1995.1080p.mkv", "movies/Heat.1995.1080p.mkv")
+        os.remove(src)                                  # fonte ja apagada
+        rc, saida = self._links("--scan", "--apply")
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.exists(dst), "a varredura removeu um arquivo")
+        self.assertIn("nada novo a adotar", saida)
+
+    def test_adotado_passa_a_ser_reconciliado(self):
+        """O ponto do --scan: trazer o acervo antigo para dentro do 'links'."""
+        src, dst = self._linka_na_mao("Heat.1995.1080p.mkv", "movies/Heat.1995.1080p.mkv")
+        self._links("--scan", "--apply")
+        os.remove(src)
+        rc, saida = self._links("--apply")
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(dst), "o adotado nao foi reconciliado")
+        self.assertIn("removidos 1 link(s)", saida)
+
+    def test_scan_e_idempotente(self):
+        self._linka_na_mao("Heat.1995.1080p.mkv", "movies/Heat.1995.1080p.mkv")
+        self._links("--scan", "--apply")
+        rc, saida = self._links("--scan", "--apply")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self._razao()), 1)
+        self.assertIn("ja na razao:", saida)
+        self.assertIn("nada novo a adotar", saida)
+
+    def test_scan_aponta_baixado_fora_da_biblioteca(self):
+        """Video grande em torrents/ sem link: o postprocess nao rodou."""
+        solto = self._video("Sicario.2015.1080p.mkv")
+        rc, saida = self._links("--scan")
+        self.assertEqual(rc, 0)
+        self.assertIn("baixado sem link na biblioteca:", saida)
+        self.assertIn(solto, saida)
+
+    def test_scan_nao_reclama_de_lixo_do_torrent(self):
+        """.txt, capa e amostra pequena nao sao 'faltando na biblioteca'."""
+        with open(os.path.join(self.completo, "LEIA.txt"), "w") as f:
+            f.write("x")
+        with open(os.path.join(self.completo, "amostra.mkv"), "wb") as f:
+            f.write(b"\0" * 1024)
+        rc, saida = self._links("--scan")
+        self.assertEqual(rc, 0)
+        self.assertIn("baixado sem link na biblioteca:     0", saida)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
