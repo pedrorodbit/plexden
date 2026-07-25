@@ -65,37 +65,45 @@ cobertura_so() {
     log "  SO: $pretty"
     case "$id" in
         debian)
-            log "  NIVEL: completo — o CI instala a stack inteira em debian:stable-slim a cada push" ;;
+            log "  Tier 1 — o CI instala a stack inteira em debian:stable-slim a cada push" ;;
         ubuntu)
             if [ "$ver" = "24.04" ]; then
-                log "  NIVEL: completo — o CI instala a stack inteira em ubuntu:24.04 a cada push"
+                log "  Tier 1 — o CI instala a stack inteira em ubuntu:24.04 a cada push"
             else
-                log "  NIVEL: parcial — o CI testa o Ubuntu 24.04, nao o $ver."
-                log "         Mesmo caminho de codigo, mas esta versao nao e exercitada."
+                log "  Tier 3 — o CI testa o Ubuntu 24.04, nao o $ver."
+                log "           Mesmo caminho de codigo, versao nao exercitada." ;
             fi ;;
         fedora)
-            log "  NIVEL: completo — o CI instala a stack inteira em fedora:latest a cada push" ;;
+            log "  Tier 1 — o CI instala a stack inteira em fedora:latest a cada push" ;;
         opensuse-leap)
-            log "  NIVEL: completo — o CI instala a stack inteira em opensuse/leap a cada push" ;;
+            log "  Tier 1 — o CI instala a stack inteira em opensuse/leap a cada push" ;;
         arch|almalinux)
-            log "  NIVEL: parcial — o CI so roda o dry-run aqui (deteccao e sintaxe)."
-            log "         A instalacao em si nunca foi exercitada nesta distro." ;;
+            log "  Tier 2 — o CI so roda o dry-run aqui (deteccao e sintaxe)."
+            log "           A instalacao em si nunca foi exercitada nesta distro." ;;
+        alpine)
+            # Nao e falta de teste: o Plex nao publica build musl. Melhor dizer
+            # agora do que deixar a pessoa descobrir no meio da instalacao.
+            log "  SEM TIER — o Plex nao tem build para musl, entao esta stack nao"
+            log "           roda no Alpine. Use uma base glibc enxuta (debian:slim)." ;;
+        nixos|gentoo)
+            log "  SEM TIER — o modelo de instalacao do $id e outro; um instalador"
+            log "           imperativo como este nao se aplica." ;;
         *)
             # Nao esta na matriz: vale pelo parentesco, e so.
             case " $like " in
                 *debian*|*ubuntu*)
-                    log "  NIVEL: por parentesco — familia Debian, testada via Debian stable e Ubuntu 24.04" ;;
+                    log "  Tier 3 — familia Debian, testada via Debian stable e Ubuntu 24.04" ;;
                 *rhel*|*fedora*|*centos*)
-                    log "  NIVEL: por parentesco — familia RPM, testada via Fedora" ;;
+                    log "  Tier 3 — familia RPM, testada via Fedora" ;;
                 *suse*)
-                    log "  NIVEL: por parentesco — familia SUSE, testada via openSUSE Leap" ;;
+                    log "  Tier 3 — familia SUSE, testada via openSUSE Leap" ;;
                 *arch*)
-                    log "  NIVEL: por parentesco — familia Arch, e o Arch so tem dry-run" ;;
+                    log "  Tier 3 — familia Arch, e o Arch so tem dry-run" ;;
                 *)
-                    log "  NIVEL: nenhum — este SO nao aparece em lugar nenhum do CI."
-                    log "         Se o gerenciador de pacotes for detectado abaixo, deve funcionar," ;;
+                    log "  SEM TIER — este SO nao aparece em lugar nenhum do CI."
+                    log "           Se o gerenciador for detectado abaixo, deve funcionar," ;;
             esac
-            log "         mas ninguem instalou a stack aqui. Reporte como for." ;;
+            log "           mas ninguem instalou a stack aqui. Reporte como for." ;;
     esac
 }
 
