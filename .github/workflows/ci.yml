@@ -28,6 +28,10 @@ jobs:
       - name: Sintaxe do plexden (Python)
         run: python3 -c "import ast; ast.parse(open('plexden').read())"
 
+      # Cobertura que nao depende de qual qBittorrent as distros empacotam.
+      - name: Testes unitarios
+        run: python3 -m unittest discover -s tests -v
+
   # ------------------------------------------------------------- distros ---
   # Em cada familia de distro, roda 'provision.sh --check' (dry-run, sem
   # instalar nada) e confere que o gerenciador certo foi detectado e que o

@@ -64,7 +64,14 @@ outras da mesma linha andam pelo mesmo caminho de código, mas não são testada
 Mint, por exemplo, herda o resultado do Ubuntu por ser `apt`, e ninguém o
 instalou de fato.
 
-São dois níveis de teste, e a diferença importa:
+Antes dos dois, há um terceiro nível que não depende de distro nenhuma:
+`tests/` guarda as formas de resposta que o qBittorrent usa no login, simuladas.
+Existe porque o qB 5.2 trocou o `200 Ok.` por um `204` sem corpo e o `plexden`
+recusava um login que tinha funcionado. Hoje o Fedora exercita essa forma no CI,
+mas por acaso — se ele mudar de versão, a cobertura sumiria sem nada ficar
+vermelho. Os testes simulados não dependem dessa coincidência.
+
+São dois níveis de teste de instalação, e a diferença importa:
 
 - **Instalação completa** — exatamente quatro imagens: `debian:stable-slim`,
   `ubuntu:24.04`, `fedora:latest` e `opensuse/leap:latest`. Cada push instala a
