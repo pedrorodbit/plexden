@@ -222,16 +222,3 @@ jobs:
             [ "$c" = 200 ] || { echo "$f -> HTTP $c"; exit 1; }
             echo "  $f HTTP 200"
           done
-
-  # TEMPORARIO: responde se da para testar SELinux enforcing (precisa de VM com
-  # kernel SELinux, o que exige virtualizacao aninhada). Some depois da leitura.
-  sonda-kvm:
-    runs-on: ubuntu-latest
-    steps:
-      - name: /dev/kvm existe no runner?
-        run: |
-          echo "kernel: $(uname -r)"
-          ls -l /dev/kvm 2>&1 || echo "SEM /dev/kvm"
-          grep -cE '^flags.*(vmx|svm)' /proc/cpuinfo || echo "sem vmx/svm no cpuinfo"
-          command -v qemu-system-x86_64 && qemu-system-x86_64 --version | head -1 || echo "sem qemu"
-          command -v kvm-ok && kvm-ok || true
