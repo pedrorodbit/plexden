@@ -270,7 +270,11 @@ def start_qbit():
         return True
     sh(["pkill", "-x", "qbittorrent-nox"])
     time.sleep(3)
-    sh(["su", "-", PLEX_USER, "-c", "qbittorrent-nox --daemon"])
+    # --confirm-legal-notice: numa instalacao nova o qBittorrent exige aceitar o
+    # aviso legal no terminal antes de subir. Sem isso ele le stdin, ve EOF (nao
+    # ha tty) e morre — a stack nunca sobe sozinha na primeira vez.
+    sh(["su", "-", PLEX_USER, "-c",
+        "qbittorrent-nox --daemon --confirm-legal-notice"])
     for i in range(1, 16):
         if qbit_ok():
             print(f"  qBittorrent  iniciado ({i}s)")
@@ -287,9 +291,21 @@ def start_plex():
     return plex_process_start()
 
 
+def cf_configured():
+    """O tunnel e opcional. So consideramos que ele existe se ha servico
+    instalado ou credenciais no lugar — sem isso, cloudflared fora do ar e o
+    estado esperado, nao uma falha da stack."""
+    return bool(_cf_systemd_unit()) or os.access(INIT_CF, os.X_OK) or \
+        os.path.isfile("/etc/cloudflared/cert.pem") or \
+        os.path.isfile(os.path.join(PERSIST, "cloudflared", "cert.pem"))
+
+
 def start_cf():
     if cf_ok():
         print("  cloudflared  ja no ar")
+        return True
+    if not cf_configured():
+        print("  cloudflared  nao configurado (tunnel e opcional) — ignorando")
         return True
     if not cf_start():
         print("  cloudflared  SEM servico (systemd/init) — rode provision")
@@ -343,7 +359,12 @@ def do_status():
     else:
         print("  Plex         PARADO")
     print("  qBittorrent  OK" if qbit_ok() else "  qBittorrent  PARADO")
-    print("  cloudflared  OK" if cf_ok() else "  cloudflared  PARADO")
+    if cf_ok():
+        print("  cloudflared  OK")
+    elif cf_configured():
+        print("  cloudflared  PARADO")
+    else:
+        print("  cloudflared  nao configurado (opcional)")
     print("\n  Volume persistente:")
     try:
         st = os.statvfs(PERSIST)

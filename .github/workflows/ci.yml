@@ -58,6 +58,9 @@ jobs:
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y -q python3 git
           elif command -v zypper >/dev/null 2>&1; then
+            # sem o refresh, os metadados da imagem ficam atras dos mirrors e a
+            # instalacao morre com 404 em pacote que ja rodou de versao
+            zypper -n --gpg-auto-import-keys refresh
             zypper -n install python3 git
           elif command -v pacman >/dev/null 2>&1; then
             pacman -Sy --noconfirm --needed archlinux-keyring
@@ -76,3 +79,129 @@ jobs:
       - name: plexden compila sob o python desta distro
         run: |
           python3 -c "import ast, sys; ast.parse(open('plexden').read()); print('plexden OK sob Python', sys.version.split()[0])"
+
+  # ----------------------------------------------------------------- e2e ---
+  # Instalacao de verdade, ponta a ponta: roda o install.sh completo num
+  # container Debian descartavel — ele baixa os arquivos deste branch, instala
+  # Plex + qBittorrent + cloudflared, sobe os servicos e a stack e' exercitada
+  # (login na WebUI, hardlink da biblioteca). E o unico job que muta o sistema.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container:
+      image: debian:stable-slim
+    steps:
+      # De proposito NAO instalamos curl: o install.sh tem que se virar sozinho
+      # (ensure_curl) — esse caminho tambem faz parte do teste.
+      - name: Dependencias do checkout (sem curl)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates
+          ! command -v curl || { echo "curl ja existe: ensure_curl nao seria testado"; exit 1; }
+
+      - uses: actions/checkout@v5
+
+      # PLEXDEN_RAW aponta para o proprio checkout: o raw.githubusercontent e
+      # cacheado por CDN e serviria os arquivos do commit anterior, fazendo o
+      # job testar codigo velho (ou passar verde em cima dele). O caminho de
+      # rede continua coberto pelo passo "URLs publicas" abaixo.
+      # $PWD, e nao github.workspace: a expressao devolve o caminho no host, que
+      # nao existe dentro do container (la o checkout fica montado em /__w).
+      - name: install.sh completo (instala e sobe a stack)
+        env:
+          PLEXDEN_HOME: /srv/plexden
+          PLEXDEN_USER: plex
+        run: PLEXDEN_RAW="file://$PWD" bash install.sh
+
+      - name: Os arquivos instalados sao os deste commit
+        run: |
+          cmp /srv/plexden/scripts/plexden plexden
+          cmp /srv/plexden/provision.sh    provision.sh
+
+      - name: Binarios, stubs e config no lugar
+        run: |
+          set -x
+          command -v curl                       # ensure_curl funcionou
+          command -v plexden
+          cloudflared --version                 # binario estatico baixado e +x
+          dpkg -s plexmediaserver  >/dev/null   # repo apt assinado do Plex
+          dpkg -s qbittorrent-nox  >/dev/null
+          id plex
+          test -x /etc/init.d/plexmediaserver
+          test -x /usr/local/bin/plex-stack-start
+          test -x /home/plex/bin/plex-start
+          grep -qx 'PLEXDEN_HOME=/srv/plexden' /etc/plexden.conf
+          grep -qx 'PLEXDEN_USER=plex'         /etc/plexden.conf
+          for d in movies series config scripts cloudflared \
+                   torrents/complete torrents/incomplete; do
+            test -d "/srv/plexden/$d" || { echo "faltou /srv/plexden/$d"; exit 1; }
+          done
+          test "$(stat -c %U /srv/plexden/movies)"     = plex
+          test "$(stat -c %a /srv/plexden/cloudflared)" = 700
+          grep -q 'plexden postprocess' /home/plex/.config/qBittorrent/qBittorrent.conf
+
+      - name: Servicos no ar (Plex e WebUI do qBittorrent respondendo)
+        run: |
+          wait_http() {   # $1 = url, $2 = rotulo
+            for _ in $(seq 1 45); do
+              c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" || true)
+              case "$c" in 2*|3*|4*) echo "  $2 HTTP $c"; return 0 ;; esac
+              sleep 2
+            done
+            echo "  $2 nao respondeu ($1)"; return 1
+          }
+          wait_http http://127.0.0.1:8081/            qBittorrent
+          wait_http http://127.0.0.1:32400/identity   Plex
+          plexden services status
+
+      - name: credentials.env -> reprovisiona -> 'plexden qb' loga
+        run: |
+          # Exercita o caminho dos segredos: senha da WebUI sendo sedeada via
+          # PBKDF2 e o ~/.qbcreds regenerado. E de quebra prova que rodar o
+          # provision.sh de novo e' idempotente.
+          printf 'QB_USER=citest\nQB_PASS=senha-do-ci-123\n' > /srv/plexden/credentials.env
+          bash /srv/plexden/provision.sh
+          test "$(stat -c %a /srv/plexden/credentials.env)" = 600
+          grep -qx 'QB_USER=citest' /home/plex/.qbcreds
+          grep -q 'WebUI\\Password_PBKDF2=' /home/plex/.config/qBittorrent/qBittorrent.conf
+          # o teste que importa: a senha sedeada realmente autentica na WebUI
+          su - plex -c 'plexden qb list'
+
+      - name: postprocess cria hardlink na biblioteca
+        run: |
+          C=/srv/plexden/torrents/complete
+          # acima do MIN_VIDEO_MB (100), senao o postprocess ignora de proposito
+          dd if=/dev/zero of="$C/The.Office.S04E01.1080p.WEB.mkv"   bs=1M count=120 status=none
+          dd if=/dev/zero of="$C/Blade.Runner.2049.2017.1080p.mkv"  bs=1M count=120 status=none
+          chown -R plex:plex "$C"
+          su - plex -c 'plexden postprocess "The.Office.S04E01.1080p.WEB"  "/srv/plexden/torrents/complete/The.Office.S04E01.1080p.WEB.mkv"'
+          su - plex -c 'plexden postprocess "Blade.Runner.2049.2017.1080p" "/srv/plexden/torrents/complete/Blade.Runner.2049.2017.1080p.mkv"'
+          test -f "/srv/plexden/series/The Office/Season 04/The.Office.S04E01.1080p.WEB.mkv"
+          test -f "/srv/plexden/movies/Blade.Runner.2049.2017.1080p.mkv"
+          # hardlink de verdade (nlink 2), nao copia: e o ponto do design
+          test "$(stat -c %h "$C/The.Office.S04E01.1080p.WEB.mkv")" = 2
+
+      - name: Ciclo de vida dos servicos (stop/start)
+        run: |
+          plexden services stop
+          plexden services start
+          plexden services status
+
+      # O one-liner do README depende dessas URLs existirem; a instalacao acima
+      # roda do checkout de proposito, entao esta e a checagem que garante que o
+      # caminho publico nao quebrou.
+      - name: URLs publicas do README respondem
+        run: |
+          for f in install.sh plexden provision.sh credentials.env.example; do
+            u="https://raw.githubusercontent.com/${{ github.repository }}/main/$f"
+            c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$u" || true)
+            [ "$c" = 200 ] || { echo "$f -> HTTP $c"; exit 1; }
+            echo "  $f HTTP 200"
+          done
+
+      - name: Logs, se algo falhar
+        if: failure()
+        run: |
+          tail -n 60 /srv/plexden/config/*.log 2>/dev/null || true
+          ls -la /srv/plexden /home/plex 2>/dev/null || true
+          cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
