@@ -53,21 +53,29 @@ toda parte; o que muda é como o Plex chega.
 
 | Família | Distros | Gerenciador | Plex | CI |
 |---|---|---|---|---|
-| Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | ✅ **instalação completa** |
+| Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | ✅ **instalação completa** (Debian stable) |
 | RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | ✅ **instalação completa** (Fedora) |
-| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ **instalação completa** (Leap) |
+| SUSE | openSUSE, SLES | `zypper` | pacote oficial | ✅ **instalação completa** (openSUSE Leap) |
 | Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | ✅ dry-run |
+
+Repare que a coluna "CI" nomeia **uma** distro por família, e é literal: é aquela
+que roda no CI. As outras da mesma linha andam pelo mesmo caminho de código, mas
+não são testadas. Ubuntu e Mint, por exemplo, herdam o resultado do Debian por
+serem `apt` — ninguém os instalou de fato.
 
 São dois níveis de teste, e a diferença importa:
 
-- **Instalação completa** (Debian, Fedora e openSUSE Leap) — cada push instala a
-  stack do zero num container: baixa tudo, sobe os serviços e confere que o Plex
-  responde em `:32400`, que a WebUI do qBittorrent responde em `:8081` e
-  autentica com a senha gerada, que `pause`/`resume` de fato mudam o estado do
-  torrent, e que o `postprocess` cria hardlink de verdade na biblioteca.
-- **Dry-run** (Arch e AlmaLinux) — roda o `provision.sh --check`, que confere que
-  o gerenciador certo foi detectado e que o `plexden` compila sob o Python de lá.
-  Valida detecção e sintaxe, não a instalação em si.
+- **Instalação completa** — exatamente três imagens: `debian:stable-slim`,
+  `fedora:latest` e `opensuse/leap:latest`. Cada push instala a stack do zero num
+  container: baixa tudo, sobe os serviços e confere que o Plex responde em
+  `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com a
+  senha gerada, que `pause`/`resume` de fato mudam o estado do torrent, e que o
+  `postprocess` cria hardlink de verdade na biblioteca.
+- **Dry-run** — `archlinux:latest` e `almalinux:9`. Roda o `provision.sh --check`,
+  que confere que o gerenciador certo foi detectado e que o `plexden` compila sob
+  o Python de lá. Valida detecção e sintaxe, não a instalação em si — foi
+  justamente uma instalação de verdade que revelou que o openSUSE chama `procps`
+  o que o Fedora chama `procps-ng`.
 
 Quatro ressalvas honestas:
 
