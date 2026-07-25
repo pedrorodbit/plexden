@@ -102,12 +102,13 @@ jobs:
       # cacheado por CDN e serviria os arquivos do commit anterior, fazendo o
       # job testar codigo velho (ou passar verde em cima dele). O caminho de
       # rede continua coberto pelo passo "URLs publicas" abaixo.
+      # $PWD, e nao github.workspace: a expressao devolve o caminho no host, que
+      # nao existe dentro do container (la o checkout fica montado em /__w).
       - name: install.sh completo (instala e sobe a stack)
         env:
-          PLEXDEN_RAW: file://${{ github.workspace }}
           PLEXDEN_HOME: /srv/plexden
           PLEXDEN_USER: plex
-        run: bash install.sh
+        run: PLEXDEN_RAW="file://$PWD" bash install.sh
 
       - name: Os arquivos instalados sao os deste commit
         run: |
