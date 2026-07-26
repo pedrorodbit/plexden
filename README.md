@@ -204,7 +204,20 @@ O que você faz depois de instalar:
    sudo plexden services restart
    ```
 3. **Cloudflare Tunnel** (opcional) — jogue suas credenciais em
-   `$PLEXDEN_HOME/cloudflared/` e rode o `provision.sh` de novo.
+   `$PLEXDEN_HOME/cloudflared/` (`cert.pem`, `<UUID>.json` e o `config.yml` que
+   você mesmo escreve) e rode o `provision.sh` de novo — ele só copia o que
+   estiver lá para `/etc/cloudflared/`; a autenticação com a Cloudflare e o
+   `config.yml` são seus.
+
+   > ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
+   > `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do
+   > redirect da web app pelo protocolo de entrada — com origem `http://` ele
+   > devolve `Location: http://.../web/index.html`, e se seu domínio for
+   > HSTS-preloaded o navegador recusa o redirect e a web app não carrega (a
+   > API em `/identity` continua respondendo 200 normalmente, o que engana).
+   > Como o certificado interno do Plex é `*.plex.direct`, a rota também
+   > precisa de `originRequest.noTLSVerify: true`. O qBittorrent não tem essa
+   > exigência — pode ir com `http://` de boa.
 
 ## O dia a dia
 
@@ -230,6 +243,12 @@ O que cada um faz:
   estado e progresso de cada um, e repete o total no fim — se aparecer algo
   `stalledUP 100%` na lista, você está prestes a mexer num torrent que já estava
   completo e semeando.
+
+  > Se você adiciona magnets pausados direto pela WebUI (não pelo `plexden`): em
+  > algumas versões do qBittorrent (observado na série 4.5) um torrent adicionado
+  > com "iniciar pausado" pode retomar sozinho assim que os metadados do magnet
+  > chegam. Depois de um lote assim, confira com `plexden qb list` e use
+  > `plexden qb pause "<termo>"` se algum tiver voltado a baixar.
 - **`postprocess`** — quando um download termina, decide se é filme ou série e
   cria um **hardlink** na biblioteca (sem duplicar espaço, e o torrent continua
   semeando do arquivo original). Uma ressalva que importa: hardlink não cruza
@@ -285,6 +304,50 @@ O que cada um faz:
   reivindicado: sem token ele usa o canal público, e com token respeita o canal
   da sua conta. Se a instalação do pacote falhar, ele sai com erro apontando o
   backup — em vez de deixar você com o Plex parado e um "Pronto" na tela.
+
+## Problemas comuns
+
+Coisas que já aconteceram numa instalação de verdade e não são óbvias pelo
+sintoma:
+
+**A web do Plex para de carregar, mas `https://.../identity` responde 200 —**
+sintoma clássico de o Cloudflare Tunnel apontar o Plex para `http://` em vez de
+`https://` no `config.yml`. Veja a ressalva na seção do túnel, acima. O
+qBittorrent não sofre disso (ingress HTTP puro), então se só o Plex cair com
+esse padrão, é a pista.
+
+**Trocar a senha da sua conta Plex derruba o túnel do Plex (não o do
+qBittorrent) —** o efeito é uma cascata só, não vários problemas:
+
+```
+troca de senha na conta Plex
+  → o token salvo em Preferences.xml é revogado (plex.tv passa a responder 401)
+    → o servidor perde o claim (claimed="0")
+      → sem token válido, o Plex não renova o certificado *.plex.direct
+        → o TLS na porta 32400 para de responder
+          → o ingress que aponta pra https://localhost:32400 recebe conexão
+            recusada → 502 no domínio do túnel
+```
+
+Diagnóstico — o campo `claimed` cai para `"0"` em `/identity`, e um `curl` no
+`/api/v2/user` da conta Plex com o token antigo responde `401`. A correção é só
+reclamar (token novo de [plex.tv/claim](https://plex.tv/claim), mesmo comando
+do passo 2 acima) — **não mexa no túnel**, a configuração dele continua certa,
+só falta o certificado. Biblioteca e metadados não são afetados: ficam no banco
+local. Trocar o ingress para `http://` "resolve" o sintoma e esconde a causa
+real (o token revogado) — evite.
+
+**`claimed` some depois de reiniciar, mesmo sem trocar senha —** normalmente é
+o Plex subindo sem `PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR` configurado, o
+que faz ele rodar sem enxergar o banco. Suba sempre pelo
+`plexden services start`/`restart` (ou o stub que ele instala) — nunca chame o
+binário direto com `nohup`, porque é esse comando que exporta a variável certa.
+
+**`pkill -f` via SSH pode derrubar a própria sessão —** um padrão como
+`pkill -f "Plex Media Server"` também casa com a linha de comando do processo
+SSH que você está usando para rodar o comando, e mata a própria conexão. Use
+`pkill -x` (nome exato) ou rode a partir de um script no servidor em vez de um
+one-liner interativo.
 
 ## Ajustando ao seu setup
 
