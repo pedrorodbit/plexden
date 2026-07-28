@@ -198,11 +198,52 @@ O que você faz depois de instalar:
    curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
    sudo plexden services restart
    ```
-3. **Cloudflare Tunnel** (opcional) — coloque suas credenciais em
-   `$PLEXDEN_HOME/cloudflared/` (`cert.pem`, `<UUID>.json` e o `config.yml`
-   que você mesmo escreve) e rode o `provision.sh` de novo — ele só copia o
-   que estiver lá para `/etc/cloudflared/`; a autenticação com a Cloudflare e
-   o `config.yml` são por sua conta.
+3. **Cloudflare Tunnel** (opcional) — o `provision.sh` já instalou o binário
+   do `cloudflared`; falta só autenticar, criar o túnel e apontar as rotas.
+   Isso é feito uma vez, na própria máquina do servidor:
+
+   ```bash
+   cloudflared tunnel login                  # abre um link; autorize no navegador
+   cloudflared tunnel create plexden         # gera o <UUID>.json e imprime o UUID
+   ```
+
+   O `login` deixa um `cert.pem` em `~/.cloudflared/`, e o `create` deixa um
+   `<UUID>.json` no mesmo lugar. Mova os dois para dentro do volume persistente
+   (é de lá que o `provision.sh` restaura tudo depois, inclusive numa
+   reinstalação do zero) e escreva o `config.yml` ao lado:
+
+   ```bash
+   mv ~/.cloudflared/cert.pem ~/.cloudflared/*.json "$PLEXDEN_HOME/cloudflared/"
+   cat > "$PLEXDEN_HOME/cloudflared/config.yml" <<EOF
+   tunnel: <UUID>
+   credentials-file: /etc/cloudflared/<UUID>.json
+
+   ingress:
+     - hostname: plex.seudominio.com
+       service: https://localhost:32400
+       originRequest:
+         noTLSVerify: true
+     - hostname: qb.seudominio.com
+       service: http://localhost:8080
+     - service: http_status:404
+   EOF
+   ```
+
+   Falta apontar o DNS para o túnel (também uma vez só, por hostname):
+
+   ```bash
+   cloudflared tunnel route dns plexden plex.seudominio.com
+   cloudflared tunnel route dns plexden qb.seudominio.com
+   ```
+
+   Com os três arquivos (`cert.pem`, `<UUID>.json`, `config.yml`) no lugar,
+   rode o `provision.sh` de novo — ele copia tudo para `/etc/cloudflared/` e
+   instala o serviço:
+
+   ```bash
+   sudo $PLEXDEN_HOME/provision.sh
+   plexden services status              # cloudflared deve aparecer rodando
+   ```
 
    > ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
    > `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do
