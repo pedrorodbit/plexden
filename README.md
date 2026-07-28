@@ -1,6 +1,6 @@
 # plexden
 
-[![CI](https://github.com/pedrorodbit/plexden/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrorodbit/plexden/actions/workflows/ci.yml)
+[![CI](https://github.com/t00ls-dev/plexden/actions/workflows/ci.yml/badge.svg)](https://github.com/t00ls-dev/plexden/actions/workflows/ci.yml)
 
 Um servidor de mídia caseiro — **Plex + qBittorrent + Cloudflare Tunnel** — que
 roda em qualquer Linux e é tocado por um único script Python. Sem framework, sem
@@ -23,7 +23,7 @@ inclusive o cloudflared, detectando sozinho se ele roda via systemd ou SysV.
 Numa máquina nova, como root, uma linha resolve:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/t00ls-dev/plexden/main/install.sh | sudo bash
 ```
 
 > **Sobre distros:** o instalador (e o `plexden update`) detecta sozinho o seu

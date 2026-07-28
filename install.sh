@@ -2,12 +2,12 @@
 #
 # Instalador da stack Plex + qBittorrent + Cloudflare Tunnel.
 #
-#   curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/t00ls-dev/plexden/main/install.sh | sudo bash
 #
 # Parametrizavel por variaveis de ambiente:
 #   PLEXDEN_HOME   diretorio persistente da stack    (pergunta durante a instalacao,
 #                  default /srv/plexden — passe por env para pular a pergunta)
-#   PLEXDEN_REPO   owner/repo no GitHub              (default pedrorodbit/plexden)
+#   PLEXDEN_REPO   owner/repo no GitHub              (default t00ls-dev/plexden)
 #   PLEXDEN_BRANCH branch                            (default main)
 #   PLEXDEN_RAW    origem dos arquivos               (default raw.githubusercontent)
 #                  aceita qualquer coisa que o curl entenda, inclusive file://
@@ -19,7 +19,7 @@
 #
 set -euo pipefail
 
-REPO="${PLEXDEN_REPO:-pedrorodbit/plexden}"
+REPO="${PLEXDEN_REPO:-t00ls-dev/plexden}"
 BRANCH="${PLEXDEN_BRANCH:-main}"
 RAW="${PLEXDEN_RAW:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
 
