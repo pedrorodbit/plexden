@@ -670,6 +670,12 @@ def _autolog(msg):
 
 
 def _clean_show(raw):
+    # '/' nunca sobrevive: 'name' vem cru do %N do qBittorrent (nome do
+    # torrent, escolhido por quem o criou) e vira componente de caminho no
+    # fallback do postprocess. Sem isto, um nome como "/home/plex/x season 1"
+    # escapava de SERIES via os.path.join(SERIES, "/abs/...") — que descarta
+    # SERIES por completo quando o segundo argumento e absoluto.
+    raw = raw.replace("/", " ")
     return re.sub(r"\s+", " ", raw.replace(".", " ").replace("_", " ")).strip()
 
 
@@ -733,7 +739,7 @@ def _links_merge(novos):
         _autolog(f"  AVISO: nao consegui gravar a razao ({LINKS_DB}): {e}")
 
 
-def _hardlink(src, dst, ledger=None):
+def _hardlink(src, dst, ledger=None, root=None):
     """True se o arquivo passou a existir no destino agora.
 
     O contador do postprocess depende disso: antes ele somava tambem os
@@ -742,7 +748,15 @@ def _hardlink(src, dst, ledger=None):
 
     Quando 'ledger' e um dict, o par destino->origem e anotado nele para o
     chamador gravar na razao de uma vez so (ver _links_merge).
+
+    Quando 'root' e dado, 'dst' fora dele e recusado. Segunda barreira contra
+    o mesmo risco que _clean_show ja neutraliza na origem (nome de torrent
+    virando caminho): aqui pega qualquer jeito de 'dst' escapar da biblioteca,
+    inclusive um que a gente ainda nao pensou.
     """
+    if root is not None and not _sob(dst, root):
+        _autolog(f"  BLOQUEADO (fora de {root}): {dst}")
+        return False
     if os.path.exists(dst):
         _autolog(f"  ja existe, pulando: {dst}")
         return False
@@ -833,14 +847,14 @@ def cmd_postprocess(args):
                          f"{os.path.basename(vid)}")
                 continue
             if _hardlink(vid, os.path.join(MOVIES, os.path.basename(vid)),
-                         novos):
+                         novos, root=MOVIES):
                 linked += 1
             base = vid.rsplit(".", 1)[0]
             for ext in SUB_EXT:
                 sub = f"{base}.{ext}"
                 if os.path.exists(sub):
                     _hardlink(sub, os.path.join(MOVIES, os.path.basename(sub)),
-                              novos)
+                              novos, root=MOVIES)
         scan_dir = MOVIES
     else:
         fallback = os.path.join(SERIES, _clean_show(name))
@@ -859,7 +873,7 @@ def cmd_postprocess(args):
             else:
                 _autolog(f"  sem temporada no nome, usando fallback: {fname}")
                 dst = os.path.join(fallback, fname)
-            if _hardlink(f, dst, novos):
+            if _hardlink(f, dst, novos, root=SERIES):
                 linked += 1
         scan_dir = SERIES
 
