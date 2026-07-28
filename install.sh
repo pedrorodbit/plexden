@@ -73,28 +73,46 @@ echo "== Provisionando (HOME=${PLEXDEN_HOME}, usuario=${PLEXDEN_USER}) =="
 export PLEXDEN_HOME PLEXDEN_USER
 bash "${PLEXDEN_HOME}/provision.sh"
 
-cat <<EOF
-
-============================================================================
- Software instalado. Faltam os SEGREDOS (nunca ficam no repositorio):
-
- 1) qBittorrent — credenciais da WebUI:
+# O provision.sh ja pergunta essas tres coisas na hora, se rodou com terminal
+# interativo (ver a secao "Assistente interativo" nele). Aqui so sobra
+# lembrar do que, por falta de tty ou por a pessoa ter pulado, ainda nao foi
+# resolvido — nunca repetir o que ja esta feito.
+PENDENTE=""
+if [ ! -f "${PLEXDEN_HOME}/credentials.env" ]; then
+    PENDENTE="${PENDENTE}
+ qBittorrent sem credenciais da WebUI:
       cp ${PLEXDEN_HOME}/credentials.env.example ${PLEXDEN_HOME}/credentials.env
-      chmod 600 ${PLEXDEN_HOME}/credentials.env
-      # edite QB_USER / QB_PASS, depois:
-      sudo ${PLEXDEN_HOME}/provision.sh      # regenera ~/.qbcreds
-
- 2) Plex — claim (servidor novo aparece como nao reivindicado):
+      chmod 600 ${PLEXDEN_HOME}/credentials.env   # edite QB_USER / QB_PASS
+      sudo ${PLEXDEN_HOME}/provision.sh           # regenera ~/.qbcreds
+"
+fi
+CLAIMED_ATUAL=$( (curl -s --max-time 5 http://127.0.0.1:32400/identity 2>/dev/null | grep -o 'claimed="[01]"') || true)
+if [ "$CLAIMED_ATUAL" != 'claimed="1"' ]; then
+    PENDENTE="${PENDENTE}
+ Plex ainda nao reivindicado:
       # pegue um token em https://plex.tv/claim (validade 4 min) e:
-      curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
+      curl -s -X POST 'http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN'
       sudo plexden services restart
+"
+fi
+if [ ! -f "${PLEXDEN_HOME}/cloudflared/config.yml" ]; then
+    PENDENTE="${PENDENTE}
+ Cloudflare Tunnel (opcional) ainda nao configurado: rode de novo o
+ provision.sh num terminal interativo, ou veja a secao Tunnel do README.
+"
+fi
 
- 3) Cloudflare Tunnel (opcional) — coloque as credenciais e reprovisione:
-      # ${PLEXDEN_HOME}/cloudflared/{cert.pem, <UUID>.json, config.yml}
-      sudo ${PLEXDEN_HOME}/provision.sh
-
- Comandos:
-      plexden services status
-      plexden qb list
-============================================================================
-EOF
+echo
+echo "============================================================================"
+if [ -n "$PENDENTE" ]; then
+    echo " Software instalado. Falta configurar (rode de novo o provision.sh num"
+    echo " terminal interativo pra ser perguntado, ou faca na mao):"
+    echo "$PENDENTE"
+else
+    echo " Pronto — qBittorrent, Plex e Cloudflare Tunnel ja configurados."
+    echo
+fi
+echo " Comandos:"
+echo "      plexden services status"
+echo "      plexden qb list"
+echo "============================================================================"

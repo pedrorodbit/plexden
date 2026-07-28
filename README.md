@@ -67,9 +67,12 @@ Quer só ver isso, sem instalar nada? `./provision.sh --check`.
 
 O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais,
 instala as dependências (`python3`, `qbittorrent-nox`, o Plex e o
-`cloudflared`), monta a estrutura de pastas e sobe os serviços. No fim, ele
-mostra o que falta fazer à mão — que são justamente as coisas que **não**
-cabem num repositório público.
+`cloudflared`), monta a estrutura de pastas e sobe os serviços. No meio do
+caminho, com terminal disponível, ele também **pergunta** pelas três coisas
+que não cabem num repositório público — senha do qBittorrent, claim do Plex e,
+se você quiser, o Cloudflare Tunnel — em vez de deixar isso para depois (mais
+detalhes em [Os segredos ficam com você](#os-segredos-ficam-com-você)). No
+fim, mostra só o que ainda ficou pendente.
 
 Se o Plex ou a WebUI do qBittorrent não responderem no fim, o instalador
 **para com erro** e aponta o log, em vez de anunciar sucesso sobre uma stack
@@ -184,7 +187,18 @@ Este repositório é público, então por princípio ele **não** guarda nada se
 nem senha, nem token do Plex, nem as credenciais do túnel. Isso é de propósito —
 segredo em histórico de Git é para sempre.
 
-O que você faz depois de instalar:
+Por isso essas três coisas nunca vêm prontas — mas também não precisam ser
+feitas na mão. Se o `provision.sh` rodar com um terminal interativo de
+verdade (é o caso normal do `curl | sudo bash`, contanto que você não tenha
+redirecionado a entrada), ele **pergunta cada uma na hora**: senha da WebUI do
+qBittorrent, o token de claim do Plex, e — se você quiser — o login e a
+criação do Cloudflare Tunnel, tudo por perguntas simples, sem editar nenhum
+arquivo. Rodar sem terminal (automação, CI, um script que não é interativo)
+pula as perguntas sem travar, e o instalador avisa no fim o que ficou
+pendente.
+
+Se você pulou alguma pergunta, ou está automatizando a instalação, dá pra
+fazer cada uma na mão a qualquer momento:
 
 1. **qBittorrent** — copie o modelo e coloque sua senha:
    ```bash
@@ -224,7 +238,7 @@ O que você faz depois de instalar:
        originRequest:
          noTLSVerify: true
      - hostname: qb.seudominio.com
-       service: http://localhost:8080
+       service: http://localhost:8081
      - service: http_status:404
    EOF
    ```
@@ -244,6 +258,9 @@ O que você faz depois de instalar:
    sudo $PLEXDEN_HOME/provision.sh
    plexden services status              # cloudflared deve aparecer rodando
    ```
+
+   (é exatamente isso que o assistente interativo faz por você, só que
+   perguntando em vez de você digitar os comandos.)
 
    > ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
    > `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do

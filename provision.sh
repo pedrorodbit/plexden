@@ -39,6 +39,31 @@ CHECK=0
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
 fail() { echo "ERRO: $*" >&2; exit 1; }
 
+# Le do terminal de controle, nao do stdin do script (que num 'curl | sudo
+# bash' e o proprio script chegando por pipe). Sem tty (pipe sem controlador,
+# CI, container sem -it) devolve 1 e nada no stdout — quem chama trata isso
+# como "pular a pergunta", nunca como travar esperando input que nunca vem.
+# A ordem do redirecionamento importa: '2>/dev/null' antes de '</dev/tty' e
+# o que faz a falha de abrir /dev/tty ficar muda (redirecoes se aplicam da
+# esquerda pra direita).
+read_tty() {   # $1 = prompt
+    local resposta
+    if read -r -p "$1" resposta 2>/dev/null </dev/tty; then
+        printf '%s' "$resposta"
+        return 0
+    fi
+    return 1
+}
+read_tty_secreto() {   # $1 = prompt; nao ecoa o que foi digitado
+    local resposta
+    if read -r -s -p "$1" resposta 2>/dev/null </dev/tty; then
+        echo >/dev/tty
+        printf '%s' "$resposta"
+        return 0
+    fi
+    return 1
+}
+
 if [ "$CHECK" = 0 ]; then
     [ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
     # cria o usuario da stack se ainda nao existir
@@ -389,6 +414,77 @@ install_cloudflared() {
 }
 install_cloudflared
 
+# Se o UUID nao veio por env, auto-detecta pelo unico *.json ja restaurado em
+# cloudflared/ (reinstalacao). Cedo o bastante para o assistente interativo
+# logo abaixo saber se ja ha tunnel configurado antes de perguntar.
+if [ -z "$TUNNEL_UUID" ]; then
+    j=$(find "$PERSIST"/cloudflared -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
+    [ -n "$j" ] && TUNNEL_UUID=$(basename "$j" .json)
+fi
+
+# Passo a passo interativo do Cloudflare Tunnel: login, criacao do tunnel,
+# hostnames e config.yml, e o route dns. So chega aqui se o assistente
+# interativo perguntou e o usuario topou. O 'cloudflared tunnel login' abre
+# um link que precisa ser autorizado no navegador — isso a propria Cloudflare
+# exige, nao da pra automatizar por fora.
+setup_cloudflare_tunnel() {
+    local certdir="${HOME:-/root}/.cloudflared" nome uuid host_plex host_qbit saida
+
+    echo "  abra o link a seguir num navegador e autorize:" >/dev/tty
+    if ! cloudflared tunnel login </dev/tty >/dev/tty 2>&1; then
+        log "  login nao concluido — Cloudflare Tunnel pulado"
+        return 0
+    fi
+    if [ ! -f "$certdir/cert.pem" ]; then
+        log "  cert.pem nao apareceu em $certdir — Cloudflare Tunnel pulado"
+        return 0
+    fi
+
+    nome=$(read_tty "  nome do tunnel [plexden]: ") || nome=""
+    nome="${nome:-plexden}"
+    saida=$(cloudflared tunnel create "$nome" </dev/tty 2>&1)
+    printf '%s\n' "$saida" >/dev/tty
+    # Ancorado em "with id <UUID>", a frase que o cloudflared sempre imprime
+    # ao criar um tunnel — pegar qualquer UUID solto na saida arriscaria casar
+    # o UUID errado (ele tambem aparece no caminho do credentials-file).
+    uuid=$(printf '%s\n' "$saida" \
+             | sed -n 's/.* with id \([0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}\).*/\1/p' \
+             | tail -1)
+    if [ -z "$uuid" ] || [ ! -f "$certdir/$uuid.json" ]; then
+        log "  nao consegui criar o tunnel (ou ele ja existia com outro nome) — pulado"
+        return 0
+    fi
+
+    host_plex=$(read_tty "  hostname do Plex (ex.: plex.seudominio.com): ") || host_plex=""
+    host_qbit=$(read_tty "  hostname do qBittorrent (Enter p/ pular): ") || host_qbit=""
+
+    cp "$certdir/cert.pem" "$PERSIST/cloudflared/"
+    cp "$certdir/$uuid.json" "$PERSIST/cloudflared/"
+    {
+        echo "tunnel: $uuid"
+        echo "credentials-file: /etc/cloudflared/$uuid.json"
+        echo
+        echo "ingress:"
+        if [ -n "$host_plex" ]; then
+            echo "  - hostname: $host_plex"
+            echo "    service: https://localhost:32400"
+            echo "    originRequest:"
+            echo "      noTLSVerify: true"
+        fi
+        if [ -n "$host_qbit" ]; then
+            echo "  - hostname: $host_qbit"
+            echo "    service: http://localhost:8081"
+        fi
+        echo "  - service: http_status:404"
+    } > "$PERSIST/cloudflared/config.yml"
+
+    [ -n "$host_plex" ] && cloudflared tunnel route dns "$nome" "$host_plex" </dev/tty >/dev/tty 2>&1
+    [ -n "$host_qbit" ] && cloudflared tunnel route dns "$nome" "$host_qbit" </dev/tty >/dev/tty 2>&1
+
+    TUNNEL_UUID="$uuid"
+    log "  tunnel '$nome' configurado (UUID $uuid)"
+}
+
 # ------------------------------------------------------------- diretorios ---
 log "== Diretorios persistentes =="
 mkdir -p "$PERSIST"/{movies,series,config,scripts,cloudflared} \
@@ -396,6 +492,55 @@ mkdir -p "$PERSIST"/{movies,series,config,scripts,cloudflared} \
 chown -R "$PLEX_USER:$PLEX_USER" "$PERSIST"
 chmod 700 "$PERSIST/cloudflared"
 log "  ok"
+
+# ------------------------------------------------------- assistente interativo ---
+# So pergunta com terminal de controle disponivel, e so pelo que ainda falta
+# (credentials.env ou tunnel ja existentes no volume persistente nao geram
+# pergunta — reinstalar nao deve pedir tudo de novo). Sem tty (automacao, CI,
+# 'curl | sudo bash' sem terminal interativo) e' pulado em silencio e o
+# provisionamento segue com os avisos de sempre, exatamente como antes deste
+# assistente existir.
+log "== Assistente interativo =="
+
+if [ -f "$PERSIST/credentials.env" ]; then
+    log "  qBittorrent: credentials.env ja existe, pulando pergunta"
+elif resposta=$(read_tty "  configurar agora a senha do qBittorrent? [S/n] "); then
+    case "$resposta" in
+        n|N|nao|Nao|NAO|não|Não|NÃO)
+            log "  qBittorrent: pulado, veja a secao do README depois" ;;
+        *)
+            qbu=$(read_tty "  usuario da WebUI [admin]: ") || qbu=""
+            qbu="${qbu:-admin}"
+            qbp1="" qbp2=""
+            while true; do
+                qbp1=$(read_tty_secreto "  senha da WebUI: ") || { qbp1=""; break; }
+                qbp2=$(read_tty_secreto "  confirme a senha: ") || { qbp2=""; break; }
+                [ -n "$qbp1" ] && [ "$qbp1" = "$qbp2" ] && break
+                echo "  senhas vazias ou diferentes, tente de novo" >/dev/tty
+            done
+            if [ -n "$qbp1" ] && [ "$qbp1" = "$qbp2" ]; then
+                ( umask 077; printf 'QB_USER=%s\nQB_PASS=%s\n' "$qbu" "$qbp1" > "$PERSIST/credentials.env" )
+                log "  credentials.env gravado"
+            else
+                log "  senha nao confirmada — qBittorrent pulado"
+            fi
+            ;;
+    esac
+else
+    log "  sem terminal interativo — qBittorrent pulado (automacao/CI)"
+fi
+
+if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/$TUNNEL_UUID.json" ] \
+   && [ -f "$PERSIST/cloudflared/config.yml" ]; then
+    log "  Cloudflare Tunnel: ja configurado, pulando pergunta"
+elif resposta=$(read_tty "  configurar agora o Cloudflare Tunnel? [s/N] "); then
+    case "$resposta" in
+        s|S|sim|Sim|SIM) setup_cloudflare_tunnel ;;
+        *) log "  Cloudflare Tunnel: pulado, veja a secao do README depois" ;;
+    esac
+else
+    log "  sem terminal interativo — Cloudflare Tunnel pulado (automacao/CI)"
+fi
 
 # ------------------------------------------------------------------ plex ----
 log "== Plex =="
@@ -409,9 +554,11 @@ EOF
 chmod +x "$PLEX_HOME"/bin/plex-start
 chown -R "$PLEX_USER:$PLEX_USER" "$PLEX_HOME"/bin
 
+PLEX_NOVO=0
 if [ -f "$PERSIST/config/Plex Media Server/Preferences.xml" ]; then
     log "  config existente encontrada — claim e bibliotecas preservados"
 else
+    PLEX_NOVO=1
     log "  config nova: sera preciso claimar em https://plex.tv/claim (ver README)"
 fi
 
@@ -534,13 +681,10 @@ PY
 fi
 
 # ------------------------------------------------------------- cloudflared --
-log "== Cloudflare Tunnel =="
-# Se o UUID nao veio por env, auto-detecta pelo unico *.json em cloudflared/.
-if [ -z "$TUNNEL_UUID" ]; then
-    j=$(find "$PERSIST"/cloudflared -maxdepth 1 -name '*.json' 2>/dev/null | head -1)
-    [ -n "$j" ] && TUNNEL_UUID=$(basename "$j" .json)
-fi
-# O config.yml entra na condicao porque ele tambem e copiado logo abaixo: sem
+log "== Cloudflare Tunnel: instalando o servico =="
+# UUID ja resolvido antes do assistente interativo (env, *.json restaurado do
+# volume, ou o tunnel recem-criado pelo wizard). O config.yml entra na condicao
+# porque ele tambem e copiado logo abaixo: sem
 # isso, faltando so ele, o cp falhava em silencio e o tunnel subia sem rota.
 if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] \
    && [ -f "$PERSIST/cloudflared/$TUNNEL_UUID.json" ] \
@@ -563,7 +707,8 @@ if [ -n "$TUNNEL_UUID" ] && [ -f "$PERSIST/cloudflared/cert.pem" ] \
     fi
 else
     log "  AVISO: credenciais do tunnel ausentes em $PERSIST/cloudflared/"
-    log "         rode 'cloudflared tunnel login' e veja a secao Tunnel do README"
+    log "         rode de novo o provision.sh num terminal interativo (o assistente"
+    log "         acima pergunta e configura), ou veja a secao Tunnel do README"
 fi
 
 # ------------------------------------------------------------ stack start ---
@@ -637,6 +782,33 @@ echo "  Plex        HTTP ${PLEX_CODE:-sem resposta}"
 CLAIMED=$(curl -s --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null \
           | grep -o 'claimed="[01]"')
 echo "  ${CLAIMED:-claim desconhecido}"
+
+# Reivindicar so faz sentido numa config nova, com o Plex de pe e ainda nao
+# reivindicado, e so pergunta com terminal — o token expira em 4 minutos, entao
+# so vale a pena pedir aqui, agora que o servico acabou de subir de verdade.
+if [ "$PLEX_NOVO" = 1 ] && [ "$PLEX_CODE" = 200 ] && [ "$CLAIMED" = 'claimed="0"' ]; then
+    if resposta=$(read_tty "  reivindicar o Plex agora? cole o token de https://plex.tv/claim [Enter p/ pular]: "); then
+        if [ -n "$resposta" ]; then
+            CLAIM_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST --max-time 10 \
+              "http://127.0.0.1:32400/myplex/claim?token=$resposta")
+            if [ "$CLAIM_CODE" = 200 ]; then
+                log "  claim aceito — reiniciando o Plex para confirmar"
+                /usr/local/bin/plexden services restart >/dev/null 2>&1 || true
+                for _ in $(seq 1 15); do
+                    CLAIMED=$(curl -s --max-time 5 http://127.0.0.1:32400/identity 2>/dev/null \
+                              | grep -o 'claimed="[01]"')
+                    [ "$CLAIMED" = 'claimed="1"' ] && break
+                    sleep 2
+                done
+                echo "  ${CLAIMED:-claim desconhecido}"
+            else
+                log "  claim recusado (HTTP $CLAIM_CODE) — token invalido ou expirado?"
+                log "         pegue um novo em https://plex.tv/claim e rode de novo o provision.sh"
+            fi
+        fi
+    fi
+fi
+
 QB_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8081/ 2>/dev/null)
 echo "  qBittorrent HTTP ${QB_CODE:-sem resposta}"
 [ "$QB_CODE" = 200 ] || FALHOU="$FALHOU qBittorrent"
