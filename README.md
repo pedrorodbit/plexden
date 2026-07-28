@@ -7,15 +7,16 @@ roda em qualquer Linux e é tocado por um único script Python. Sem framework, s
 dependência exótica: só a biblioteca padrão do Python e utilitários comuns de
 linha de comando (`curl`, `pgrep`, `su` e afins).
 
-Foi feito pensando no caso mais chato — um sistema sem systemd nem cron, onde o
-PID 1 é literalmente um `bash` e nada sobe sozinho (é o que você encontra num
-container minimalista, por exemplo). Ele dá conta disso — na família Debian; onde
-o Plex vem em `.rpm` o próprio pacote se recusa a instalar sem systemd, e isso
-está detalhado em [distros suportadas](#distros-suportadas). Mas não se limita a esse
-cenário: num Linux comum, com systemd, também roda de boa — e aí você pode deixar
-o systemd cuidar do autostart. O `plexden services` gerencia os três serviços em
-qualquer caso — inclusive o cloudflared, detectando sozinho se ele roda via
-systemd ou SysV.
+Foi feito pensando no cenário mais chato: um sistema sem systemd nem cron, onde
+o PID 1 é literalmente um `bash` e nada sobe sozinho — é o que você encontra num
+container minimalista, por exemplo. Isso funciona bem na família Debian; já onde
+o Plex vem em `.rpm`, o próprio pacote se recusa a instalar sem systemd (os
+detalhes estão em [distros suportadas](#distros-suportadas)).
+
+Mas não é só para esse cenário chato: num Linux comum, com systemd, o plexden
+também roda numa boa, e você pode deixar o systemd cuidar do autostart. Em
+qualquer um dos dois casos, o `plexden services` gerencia os três serviços —
+inclusive o cloudflared, detectando sozinho se ele roda via systemd ou SysV.
 
 ## Instalando
 
@@ -27,19 +28,20 @@ curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh
 
 > **Sobre distros:** o instalador (e o `plexden update`) detecta sozinho o seu
 > gerenciador de pacotes — `apt` ou `dnf`/`yum` — e segue a partir daí. O Plex
-> tem repositório oficial em ambas as famílias. Detalhes na tabela de
+> tem repositório oficial nas duas famílias. Detalhes na tabela de
 > [distros suportadas](#distros-suportadas).
 
-O usuário que roda os serviços é sempre quem está executando a instalação —
-quem chamou o `sudo`, ou o próprio `root` se você já está numa sessão root.
-Não há mais como escolher outro usuário por variável de ambiente. Já o
-caminho onde a stack vive, o instalador **pergunta durante a instalação**
-(padrão `/srv/plexden`) — não precisa passar nada, só responder quando ele
-perguntar. A variável `PLEXDEN_HOME` só entra em cena para pular a pergunta
-em automação/CI.
+O usuário que roda os serviços é sempre quem instalou: quem chamou o `sudo`,
+ou o próprio `root` se você já estiver numa sessão root. Não dá mais para
+escolher outro usuário por variável de ambiente.
 
-Antes de tocar em qualquer coisa, ele te diz duas coisas — e nenhuma delas
-impede a instalação, só informa:
+Já o caminho onde a stack vive, o instalador **pergunta durante a instalação**
+(padrão `/srv/plexden`) — não precisa passar nada, é só responder quando ele
+perguntar. A variável `PLEXDEN_HOME` serve para pular essa pergunta em
+automação ou CI.
+
+Antes de mexer em qualquer coisa, ele te conta duas coisas — nenhuma delas
+trava a instalação, é só informativo:
 
 ```
 == Cobertura de teste deste SO ==
@@ -56,30 +58,31 @@ impede a instalação, só informa:
             - menos de 100 GB livres: da para comecar, planeje o crescimento
 ```
 
-O **tier** é o mesmo da tabela de [distros suportadas](#distros-suportadas) — o
-instalador te diz com o que você pode contar antes de começar, em vez de você
-ter que procurar. O **veredito** é `roda com folga`, `dá conta` ou `no limite`, com o motivo de cada
-ressalva — e ele mede núcleos, RAM e disco, não velocidade de transcodificação,
-que depende do modelo da CPU e nenhum número ali captura. Para só ver isso, sem
-instalar nada: `./provision.sh --check`.
+O **tier** é o mesmo da tabela de [distros suportadas](#distros-suportadas): o
+instalador já te avisa com o que você pode contar, sem você precisar ir atrás.
+O **veredito** é `roda com folga`, `dá conta` ou `no limite`, com o motivo de
+cada ressalva. Ele mede núcleos, RAM e disco — não a velocidade de
+transcodificação, que depende do modelo da CPU e nenhum número aqui capta.
+Quer só ver isso, sem instalar nada? `./provision.sh --check`.
 
-O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais, puxa
-as dependências
-(`python3`, `qbittorrent-nox`, o Plex e o `cloudflared`), monta a estrutura de
-pastas e sobe os serviços. No fim, ele te mostra o que falta fazer à mão — que
-são justamente as coisas que **não** cabem num repositório público.
+O instalador baixa o `plexden`, o `provision.sh` e o modelo de credenciais,
+instala as dependências (`python3`, `qbittorrent-nox`, o Plex e o
+`cloudflared`), monta a estrutura de pastas e sobe os serviços. No fim, ele
+mostra o que falta fazer à mão — que são justamente as coisas que **não**
+cabem num repositório público.
 
-Se o Plex ou a WebUI do qBittorrent não responderem ao final, o instalador
-**para com erro** e aponta o log, em vez de anunciar sucesso sobre uma stack que
-não subiu. O túnel não conta: ele é opcional e a ausência dele é normal.
+Se o Plex ou a WebUI do qBittorrent não responderem no fim, o instalador
+**para com erro** e aponta o log, em vez de anunciar sucesso sobre uma stack
+que não subiu. O túnel não conta nessa checagem: ele é opcional, e não estar
+configurado ainda é normal.
 
 ## Distros suportadas
 
 O `plexden` é escrito só com a biblioteca padrão do Python, então roda em
-qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação** (o
-`provision.sh`) e o **`plexden update`** — e esses detectam o gerenciador
+qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação**
+(o `provision.sh`) e o **`plexden update`** — e os dois detectam o gerenciador
 sozinhos. Os pacotes base e o `cloudflared` (binário estático) são iguais em
-toda parte; o que muda é como o Plex chega.
+toda parte; o que muda é como o Plex chega até você.
 
 | Família | Distros | Gerenciador | Plex | Suporte |
 |---|---|---|---|---|
@@ -98,65 +101,67 @@ esta diz com o que você pode contar:
 | **3** | melhor esforço, sem teste nenhum; issue e PR são bem-vindos | as demais distros das famílias acima — Mint, Rocky… |
 | **—** | fora de alcance, e não por falta de vontade | Alpine e qualquer sistema musl, NixOS, Gentoo |
 
-O tier vale para a **distro nomeada**, não para a família inteira. Mint herda o
-caminho de código do Ubuntu, mas ninguém instalou nele — por isso é Tier 3, e
-não Tier 1 por parentesco. O `provision.sh` te diz em que nível você está antes
-de instalar qualquer coisa.
+O tier vale para a **distro nomeada**, não para a família inteira. O Mint
+herda o caminho de código do Ubuntu, mas ninguém instalou o plexden nele de
+verdade — por isso é Tier 3, e não Tier 1 só por parentesco. O `provision.sh`
+te diz em que nível você está antes de instalar qualquer coisa.
 
-Sobre o último tier, para ninguém perder tempo descobrindo na prática:
+Sobre o último tier, pra ninguém perder tempo descobrindo na prática:
 
-- **Alpine e outros sistemas musl** — o Plex Media Server é distribuído só em
-  builds contra a glibc; não há versão musl. Não é uma lacuna de teste que dá
-  para fechar, é o fim da linha para esta stack. Se você quer um servidor de
-  mídia em container mínimo, o caminho é uma base glibc enxuta (`debian:slim`),
-  não o Alpine.
-- **NixOS e Gentoo** — o modelo de instalação é outro. Um instalador imperativo
-  que grava em `/usr/local/bin` e `/etc/init.d` não é "difícil" no NixOS, é
-  inaplicável. O jeito certo seria um pacote Nix próprio, e isso este repositório
-  não tem.
+- **Alpine e outros sistemas musl** — o Plex Media Server só é distribuído em
+  builds contra a glibc; não existe versão musl. Isso não é uma lacuna de
+  teste que dá pra fechar, é o fim da linha mesmo para esta stack. Se você
+  quer um servidor de mídia em container mínimo, o caminho é uma base glibc
+  enxuta (`debian:slim`), não o Alpine.
+- **NixOS e Gentoo** — o modelo de instalação é outro. Um instalador
+  imperativo que grava em `/usr/local/bin` e `/etc/init.d` não é "difícil" no
+  NixOS, é inaplicável. O jeito certo seria um pacote Nix próprio, e isso este
+  repositório não tem.
 
-Antes dos dois, há um terceiro nível que não depende de distro nenhuma:
-`tests/` guarda as formas de resposta que o qBittorrent usa no login, simuladas.
-Existe porque o qB 5.2 trocou o `200 Ok.` por um `204` sem corpo e o `plexden`
-recusava um login que tinha funcionado. Hoje o Fedora exercita essa forma no CI,
-mas por acaso — se ele mudar de versão, a cobertura sumiria sem nada ficar
-vermelho. Os testes simulados não dependem dessa coincidência.
+Antes desses dois, existe um terceiro nível de teste que não depende de
+distro nenhuma: a pasta `tests/` guarda formas de resposta simuladas do
+qBittorrent no login. Ela existe porque o qB 5.2 trocou o `200 Ok.` por um
+`204` sem corpo, e o `plexden` recusava um login que na verdade tinha
+funcionado. Hoje o Fedora exercita essa forma de resposta no CI, mas por
+acaso — se ele mudar de versão, essa cobertura some sem nada ficar vermelho.
+Os testes simulados não dependem dessa coincidência.
 
-São duas profundidades de teste de instalação, e a diferença é o que separa o
-Tier 1 do Tier 2:
+Tem dois níveis de teste de instalação, e a diferença entre eles é o que
+separa o Tier 1 do Tier 2:
 
-- **Instalação completa** — exatamente três imagens: `debian:stable-slim`,
-  `ubuntu:24.04` e `fedora:latest`. Cada push instala a stack do zero num
-  container: baixa tudo, sobe os serviços e confere que o Plex responde em
-  `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com a
-  senha gerada, que `pause`/`resume` de fato mudam o estado do torrent, que o
-  `postprocess` cria hardlink de verdade na biblioteca e que o `links --apply`
-  remove o hardlink cuja fonte sumiu — sem tocar num arquivo colocado na
-  biblioteca por fora.
+- **Instalação completa** — três imagens: `debian:stable-slim`,
+  `ubuntu:24.04` e `fedora:latest`. A cada push, a stack é instalada do zero
+  num container: baixa tudo, sobe os serviços e confere que o Plex responde
+  em `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com
+  a senha gerada, que `pause`/`resume` realmente mudam o estado do torrent,
+  que o `postprocess` cria um hardlink de verdade na biblioteca, e que o
+  `links --apply` remove o hardlink cuja fonte sumiu — sem tocar num arquivo
+  colocado na biblioteca por fora.
 
-  O Ubuntu está aí por um motivo além de ser derivado popular: ele empacota a
-  série **4.x** do qBittorrent, enquanto as outras trazem a **5.x**. Como o
-  qB 5 renomeou os endpoints de `pause`/`resume` para `stop`/`start`, é ele que
-  garante que o lado antigo desse desvio também é exercitado a cada push.
+  O Ubuntu está na lista por um motivo além de ser um derivado popular: ele
+  empacota a série **4.x** do qBittorrent, enquanto as outras imagens trazem
+  a **5.x**. Como o qB 5 renomeou os endpoints de `pause`/`resume` para
+  `stop`/`start`, é o Ubuntu que garante que o lado antigo desse desvio
+  também é testado a cada push.
 - **Dry-run** — o `provision.sh --check` roda também em `almalinux:9` e
-  confere que o gerenciador certo foi detectado e que o `plexden` compila sob
-  o Python de lá. Para **AlmaLinux esse é o único nível**: valida detecção e
-  sintaxe, não a instalação em si.
+  confere se o gerenciador certo foi detectado e se o `plexden` compila sob o
+  Python de lá. Para o **AlmaLinux, esse é o único nível de teste**: valida
+  detecção e sintaxe, não a instalação em si.
 
 Três ressalvas honestas:
 
-- **Onde o Plex vem em `.rpm`, ele exige systemd.** Não é escolha nossa: o
-  pacote tem um scriptlet que aborta a instalação com *"Plex Media Server
-  requires systemd"*. O `.deb` não faz essa checagem — por isso a promessa de
-  rodar num sistema sem init vale para a família Debian, e não para RPM. Num
-  Fedora ou RHEL normal (que têm systemd) não muda nada.
+- **Onde o Plex vem em `.rpm`, ele exige systemd.** Isso não é escolha nossa:
+  o pacote tem um scriptlet que aborta a instalação com *"Plex Media Server
+  requires systemd"*. O `.deb` não faz essa checagem, então a promessa de
+  rodar num sistema sem init vale para a família Debian, não para RPM. Num
+  Fedora ou RHEL normal, que já vem com systemd, isso nem chega a importar.
 
-- **O repositório do Plex nem sempre é aceito — e aí entra o pacote oficial.** O
-  instalador tenta o repositório primeiro, que é o caminho preferido (deixa o
-  `apt`/`dnf upgrade` cuidar das atualizações). Mas desde fevereiro de 2026 o
-  apt do Debian 13+ verifica assinaturas com o Sequoia, que recusa a chave do
-  Plex porque a assinatura de vínculo dela é SHA1. O que acontece em cada distro
-  do CI:
+- **O repositório do Plex nem sempre é aceito, e aí entra o pacote oficial.**
+  O instalador tenta o repositório primeiro — é o caminho preferido, porque
+  deixa o `apt`/`dnf upgrade` cuidando das atualizações. Mas desde fevereiro
+  de 2026 o apt do Debian 13+ passou a verificar assinaturas com o Sequoia,
+  que recusa a chave do Plex porque a assinatura de vínculo dela é SHA1. Veja
+  o que acontece em cada distro do CI:
 
   | Distro | Repositório do Plex |
   |---|---|
@@ -165,13 +170,13 @@ Três ressalvas honestas:
   | Fedora | ✅ funciona |
 
   Quando o repositório é recusado, o instalador **remove a entrada** — senão
-  todos os seus `apt update` passariam a dar erro daí em diante — e baixa o
-  pacote oficial direto. Só nesse caso o Plex deixa de ser atualizado pelo
-  `apt upgrade`; aí use o `plexden update`.
-- **Fedora/RHEL** — se o SELinux estiver em *enforcing*, ele pode barrar o Plex
-  de seguir os hardlinks da biblioteca ou de varrer pastas fora do lugar
-  esperado. Se a biblioteca aparecer vazia mesmo com os arquivos lá, olhe o
-  `audit.log` — costuma ser isso.
+  todo `apt update` seu passaria a dar erro dali em diante — e baixa o pacote
+  oficial direto. Só nesse caso o Plex deixa de ser atualizado pelo
+  `apt upgrade`; aí é usar o `plexden update`.
+- **Fedora/RHEL** — se o SELinux estiver em *enforcing*, ele pode impedir o
+  Plex de seguir os hardlinks da biblioteca ou de varrer pastas fora do lugar
+  esperado. Se a biblioteca aparecer vazia mesmo com os arquivos lá, dá uma
+  olhada no `audit.log` — geralmente é isso.
 
 ## Os segredos ficam com você
 
@@ -181,7 +186,7 @@ segredo em histórico de Git é para sempre.
 
 O que você faz depois de instalar:
 
-1. **qBittorrent** — copie o modelo e ponha sua senha:
+1. **qBittorrent** — copie o modelo e coloque sua senha:
    ```bash
    cp $PLEXDEN_HOME/credentials.env.example $PLEXDEN_HOME/credentials.env
    chmod 600 $PLEXDEN_HOME/credentials.env   # edite QB_USER / QB_PASS
@@ -193,11 +198,11 @@ O que você faz depois de instalar:
    curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
    sudo plexden services restart
    ```
-3. **Cloudflare Tunnel** (opcional) — jogue suas credenciais em
-   `$PLEXDEN_HOME/cloudflared/` (`cert.pem`, `<UUID>.json` e o `config.yml` que
-   você mesmo escreve) e rode o `provision.sh` de novo — ele só copia o que
-   estiver lá para `/etc/cloudflared/`; a autenticação com a Cloudflare e o
-   `config.yml` são seus.
+3. **Cloudflare Tunnel** (opcional) — coloque suas credenciais em
+   `$PLEXDEN_HOME/cloudflared/` (`cert.pem`, `<UUID>.json` e o `config.yml`
+   que você mesmo escreve) e rode o `provision.sh` de novo — ele só copia o
+   que estiver lá para `/etc/cloudflared/`; a autenticação com a Cloudflare e
+   o `config.yml` são por sua conta.
 
    > ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
    > `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do
@@ -221,79 +226,92 @@ plexden links --scan [--apply]               # redescobre pares por inode (nunca
 sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
 ```
 
-O que cada um faz:
+O que cada comando faz:
 
 - **`services`** — sobe, derruba e vigia Plex + qBittorrent + cloudflared. Ele
-  checa saúde de verdade (HTTP, não só "o processo existe"), então um serviço
-  travado é derrubado e reerguido em vez de fingir que está tudo bem.
-- **`qb`** — conversa com a WebUI do qBittorrent (login por usuário/senha guardado
-  em `~/.qbcreds`). Listar, pausar, retomar, mover — sem abrir o navegador.
-  A busca de `pause`/`resume` é por **trecho do nome**, então um termo curto pega
-  vários torrents de uma vez. Por isso o comando lista o que vai atingir, com
-  estado e progresso de cada um, e repete o total no fim — se aparecer algo
-  `stalledUP 100%` na lista, você está prestes a mexer num torrent que já estava
+  checa a saúde de verdade (por HTTP, não só "o processo existe"), então um
+  serviço travado é derrubado e reerguido em vez de continuar fingindo que
+  está tudo bem.
+- **`qb`** — conversa com a WebUI do qBittorrent, usando o usuário/senha
+  guardados em `~/.qbcreds`. Dá pra listar, pausar, retomar e mover torrents
+  sem abrir o navegador. A busca de `pause`/`resume` é por **trecho do
+  nome**, então um termo curto pode pegar vários torrents de uma vez — por
+  isso o comando sempre lista o que vai atingir, com estado e progresso de
+  cada um, e repete o total no fim. Se aparecer algo como `stalledUP 100%` na
+  lista, cuidado: você está prestes a mexer num torrent que já estava
   completo e semeando.
 
-  > Se você adiciona magnets pausados direto pela WebUI (não pelo `plexden`): em
-  > algumas versões do qBittorrent (observado na série 4.5) um torrent adicionado
-  > com "iniciar pausado" pode retomar sozinho assim que os metadados do magnet
-  > chegam. Depois de um lote assim, confira com `plexden qb list` e use
-  > `plexden qb pause "<termo>"` se algum tiver voltado a baixar.
-- **`postprocess`** — quando um download termina, decide se é filme ou série e
-  cria um **hardlink** na biblioteca (sem duplicar espaço, e o torrent continua
-  semeando do arquivo original). Uma ressalva que importa: hardlink não cruza
-  sistema de arquivos, então se `torrents/` e a biblioteca ficarem em discos
-  diferentes ele **copia** — e aí o espaço é duplicado de verdade. O log em
-  `logs/autorun.log` diz qual dos dois aconteceu. Mantenha os dois no mesmo
-  volume e o problema não existe. Outro detalhe que economiza confusão: vídeos
-  com menos de **100 MB** são ignorados de propósito — é o filtro que descarta
-  amostras e trailers que vêm junto do torrent. Se um arquivo legítimo e
-  pequeno não aparecer na biblioteca, é isso, e o `autorun.log` registra o
-  descarte. Séries são agrupadas por show e temporada
-  tiradas do próprio nome do arquivo — `The.Office.S04E01...` vira
-  `series/The Office/Season 04/`, então temporadas de torrents diferentes caem na
-  mesma pasta em vez de virarem dez séries soltas.
-- **`links`** — o download pode sumir a qualquer momento: você apaga para liberar
-  espaço, perde o interesse, ou o qBittorrent remove o torrent junto com os
-  arquivos. O hardlink na biblioteca sobrevive a isso (é ele que passa a segurar
-  o dado), e o Plex segue anunciando um item — que às vezes você nem quer mais.
-  Este comando reconcilia: **fonte apagada, o link vai junto**, o diretório de
-  temporada que ficou vazio é removido e o Plex recebe um pedido de rescan.
+  > Se você adiciona magnets pausados direto pela WebUI (e não pelo
+  > `plexden`): em algumas versões do qBittorrent (visto na série 4.5) um
+  > torrent adicionado com "iniciar pausado" pode retomar sozinho assim que
+  > os metadados do magnet chegam. Depois de adicionar um lote assim, confira
+  > com `plexden qb list` e use `plexden qb pause "<termo>"` se algum tiver
+  > voltado a baixar.
+- **`postprocess`** — quando um download termina, ele decide se é filme ou
+  série e cria um **hardlink** na biblioteca. Isso não duplica espaço, e o
+  torrent continua semeando a partir do arquivo original.
 
-  O critério é procedência, não `nlink`. Toda vez que o `postprocess` linka
-  alguma coisa, ele anota o par destino → origem em `config/links.json`; o
-  `links` só olha para o que está nessa razão. Isso é deliberado: o sinal fácil
-  seria "`st_nlink == 1`, logo ninguém mais aponta pra este arquivo", só que
-  isso descreve igualmente bem toda a mídia que você copiou para a biblioteca na
-  mão — que seria apagada por engano. **O que o `plexden` nunca linkou, o
-  `plexden` nunca remove**, e isso inclui tudo que já estava na biblioteca antes
-  de você atualizar para esta versão.
+  Uma ressalva que importa: hardlink não cruza sistema de arquivos. Se
+  `torrents/` e a biblioteca estiverem em discos diferentes, ele **copia** em
+  vez de linkar — e aí o espaço é duplicado de verdade. O `logs/autorun.log`
+  registra qual dos dois aconteceu; mantendo tudo no mesmo volume, esse
+  problema nem aparece.
 
-  Sem `--apply` ele só lista. Duas outras decisões que valem saber: se o arquivo
-  na biblioteca não está mais onde foi registrado (você renomeou ou moveu), o
-  `plexden` **não sai caçando** — apenas esquece a entrada; e nada fora de
-  `movies/`/`series/` é removido, aconteça o que acontecer com a razão. Se quiser
-  automatizar, é uma linha de cron: `0 4 * * * plexden links --apply`.
+  Outro detalhe que evita confusão: vídeos com menos de **100 MB** são
+  ignorados de propósito, pra filtrar amostras e trailers que costumam vir
+  junto do torrent. Se um arquivo legítimo e pequeno sumir da biblioteca, é
+  por causa disso — e o `autorun.log` registra o descarte.
 
-  **`links --scan`** resolve o problema de quem já tinha biblioteca antes da
-  razão existir: ela nasce vazia, então nada do acervo antigo é acompanhado.
-  A varredura redescobre os pares **pelo inode** — hardlink e fonte são o mesmo
-  inode, então o vínculo é identificável sem adivinhar por nome ou tamanho.
-  Com `--apply` ela grava os pares encontrados; **em nenhum modo ela remove
-  arquivo**. O que não casa fica de fora e assim permanece: um arquivo sem fonte
-  viva pode ser "veio de um torrent já apagado" ou "foi copiado aqui na mão", e
-  não há como distinguir depois do fato — na dúvida, não se apaga.
+  Séries são agrupadas por nome do show e temporada, tirados do próprio nome
+  do arquivo: `The.Office.S04E01...` vira `series/The Office/Season 04/`.
+  Assim, temporadas vindas de torrents diferentes caem na mesma pasta, em vez
+  de virarem dez séries soltas.
+- **`links`** — o download pode sumir a qualquer momento: você apaga pra
+  liberar espaço, perde o interesse, ou o próprio qBittorrent remove o
+  torrent junto com os arquivos. O hardlink na biblioteca sobrevive a isso,
+  porque passa a segurar o dado sozinho — e o Plex continua anunciando um
+  item que às vezes você nem quer mais. Esse comando reconcilia: **fonte
+  apagada, o link vai junto**, o diretório de temporada que ficou vazio é
+  removido, e o Plex recebe um pedido de rescan.
 
-  De quebra ela mostra a direção inversa: vídeo grande em `torrents/` que nunca
-  chegou na biblioteca, ou seja, `postprocess` que não rodou. Numa biblioteca
-  real de 140 arquivos, a varredura identificou 93 pares e deixou 47 de fora.
-- **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
-  nova do Plex (e em algumas distros nem há repositório utilizável), então este
-  comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família),
-  faz backup do banco e reinstala. Não exige servidor reivindicado: sem token
-  ele usa o canal público, e com token respeita o canal da sua conta. Se a
-  instalação do pacote falhar, ele sai com erro apontando o
-  backup — em vez de deixar você com o Plex parado e um "Pronto" na tela.
+  O critério usado é procedência, não `nlink`. Toda vez que o `postprocess`
+  cria um link, ele anota o par destino → origem em `config/links.json`, e o
+  `links` só olha para o que está registrado ali. Isso é proposital: o sinal
+  fácil seria "`st_nlink == 1`, então ninguém mais aponta pra esse arquivo" —
+  só que isso descreve igualmente bem toda mídia que você copiou pra
+  biblioteca na mão, que seria apagada por engano. **O que o `plexden` nunca
+  linkou, o `plexden` nunca remove**, e isso vale também para tudo que já
+  estava na biblioteca antes de você atualizar pra esta versão.
+
+  Sem `--apply`, ele só lista, não mexe em nada. Duas outras decisões que
+  valem saber: se o arquivo na biblioteca não está mais onde foi registrado
+  (você renomeou ou moveu), o `plexden` **não sai caçando** — só esquece a
+  entrada; e nada fora de `movies/`/`series/` é removido, aconteça o que
+  acontecer com o registro. Pra automatizar, basta uma linha de cron:
+  `0 4 * * * plexden links --apply`.
+
+  **`links --scan`** resolve o problema de quem já tinha uma biblioteca antes
+  desse registro existir: ele nasce vazio, então nada do acervo antigo fica
+  acompanhado. A varredura redescobre os pares **pelo inode** — hardlink e
+  fonte são o mesmo inode, então o vínculo dá pra identificar sem adivinhar
+  por nome ou tamanho. Com `--apply` ela grava os pares que encontrou; **em
+  nenhum modo ela apaga arquivo nenhum**. O que não bate fica de fora e
+  continua assim: um arquivo sem fonte viva pode ter vindo de um torrent já
+  apagado, ou pode ter sido copiado ali na mão — e não dá pra distinguir
+  depois do fato. Na dúvida, não se apaga.
+
+  De quebra, ela também mostra a direção inversa: vídeo grande em
+  `torrents/` que nunca chegou na biblioteca, ou seja, um `postprocess` que
+  não rodou. Numa biblioteca real de 140 arquivos, essa varredura identificou
+  93 pares e deixou 47 de fora.
+- **`update`** — o que o repositório entrega costuma ficar atrás da versão
+  mais nova do Plex (e em algumas distros nem existe repositório
+  utilizável), então esse comando baixa o pacote oficial direto (`.deb` ou
+  `.rpm`, conforme a família), faz backup do banco e reinstala. Não exige
+  servidor reivindicado: sem token ele usa o canal público, e com token
+  respeita o canal da sua conta. Se a instalação do pacote falhar, ele sai
+  com erro apontando o backup — em vez de deixar você com o Plex parado e um
+  "Pronto" na tela.
 
 ## Problemas comuns
 
@@ -301,10 +319,10 @@ Coisas que já aconteceram numa instalação de verdade e não são óbvias pelo
 sintoma:
 
 **A web do Plex para de carregar, mas `https://.../identity` responde 200 —**
-sintoma clássico de o Cloudflare Tunnel apontar o Plex para `http://` em vez de
-`https://` no `config.yml`. Veja a ressalva na seção do túnel, acima. O
-qBittorrent não sofre disso (ingress HTTP puro), então se só o Plex cair com
-esse padrão, é a pista.
+é o sintoma clássico do Cloudflare Tunnel apontando o Plex para `http://` em
+vez de `https://` no `config.yml`. Veja a ressalva na seção do túnel, acima.
+O qBittorrent não sofre disso (ingress HTTP puro), então se só o Plex cair
+com esse padrão, é a pista.
 
 **Trocar a senha da sua conta Plex derruba o túnel do Plex (não o do
 qBittorrent) —** o efeito é uma cascata só, não vários problemas:
@@ -320,12 +338,12 @@ troca de senha na conta Plex
 ```
 
 Diagnóstico — o campo `claimed` cai para `"0"` em `/identity`, e um `curl` no
-`/api/v2/user` da conta Plex com o token antigo responde `401`. A correção é só
-reclamar (token novo de [plex.tv/claim](https://plex.tv/claim), mesmo comando
-do passo 2 acima) — **não mexa no túnel**, a configuração dele continua certa,
-só falta o certificado. Biblioteca e metadados não são afetados: ficam no banco
-local. Trocar o ingress para `http://` "resolve" o sintoma e esconde a causa
-real (o token revogado) — evite.
+`/api/v2/user` da conta Plex com o token antigo responde `401`. A correção é
+só reivindicar de novo (token novo de [plex.tv/claim](https://plex.tv/claim),
+mesmo comando do passo 2 acima) — **não mexa no túnel**, a configuração dele
+continua certa, só falta o certificado. Biblioteca e metadados não são
+afetados: ficam no banco local. Trocar o ingress para `http://` "resolve" o
+sintoma e esconde a causa real (o token revogado) — evite fazer isso.
 
 **`claimed` some depois de reiniciar, mesmo sem trocar senha —** normalmente é
 o Plex subindo sem `PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR` configurado, o
@@ -335,31 +353,31 @@ binário direto com `nohup`, porque é esse comando que exporta a variável cert
 
 **`pkill -f` via SSH pode derrubar a própria sessão —** um padrão como
 `pkill -f "Plex Media Server"` também casa com a linha de comando do processo
-SSH que você está usando para rodar o comando, e mata a própria conexão. Use
+SSH que você está usando pra rodar o comando, e mata a própria conexão. Use
 `pkill -x` (nome exato) ou rode a partir de um script no servidor em vez de um
 one-liner interativo.
 
 ## Ajustando ao seu setup
 
 O `plexden` procura configuração nesta ordem: variável de ambiente →
-`/etc/plexden.conf` → um default razoável.
+`/etc/plexden.conf` → um valor padrão razoável.
 
 | Variável | Default | Para quê |
 |---|---|---|
 | `PLEXDEN_HOME` | `/srv/plexden` | onde a stack vive (de preferência, um volume que persista) |
-| `PLEXDEN_USER` | *(atual)* | usuário que roda os serviços — sempre quem executou a instalação, não é escolhido à parte |
+| `PLEXDEN_USER` | *(quem instalou)* | usuário que roda os serviços — não dá pra escolher outro à parte |
 | `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se em branco, ele acha sozinho pelo `*.json` em `cloudflared/` |
 
 O `provision.sh` grava esses valores em `/etc/plexden.conf` — então, se você
-rodar de novo mais tarde (para reprovisionar), ele lembra do que foi
-resolvido na primeira instalação, mesmo que outro admin rode o comando depois.
+rodar de novo mais tarde (pra reprovisionar), ele lembra do que foi decidido
+na primeira instalação, mesmo que seja outro admin rodando o comando dessa vez.
 
 ## Como as peças se encaixam
 
-Tudo mora em `$PLEXDEN_HOME`, que de preferência fica num volume que persiste —
-assim você reinstala (ou recria o container, se for o caso) sem levar seus dados
-junto. Nos lugares onde algo externo espera um caminho fixo, deixamos um stub de
-uma linha que só chama o `plexden`:
+Tudo mora em `$PLEXDEN_HOME`, que de preferência fica num volume que persiste
+— assim você reinstala (ou recria o container, se for o caso) sem perder seus
+dados. Nos lugares onde algo externo espera um caminho fixo, deixamos um stub
+de uma linha que só chama o `plexden`:
 
 | Arquivo | Chama |
 |---|---|
@@ -368,10 +386,11 @@ uma linha que só chama o `plexden`:
 | `~/bin/plex-start` | `plexden plex-exec` |
 | AutoRun no `qBittorrent.conf` | `plexden postprocess "%N" "%F"` |
 
-Só um lembrete: num sistema sem init, **nada sobe sozinho** (lembra do PID 1 =
-bash?). Para autostart, chame `plexden services start` no boot — um serviço
-systemd, o entrypoint do container, o que fizer sentido no seu setup — ou deixe
-um `plexden services watch` rodando em segundo plano para reerguer o que cair.
+Um lembrete: num sistema sem init, **nada sobe sozinho** (lembra do PID 1 =
+bash?). Pra ter autostart, chame `plexden services start` no boot — um
+serviço systemd, o entrypoint do container, o que fizer mais sentido no seu
+setup — ou deixe um `plexden services watch` rodando em segundo plano pra
+reerguer o que cair.
 
 ## Sobre a autoria
 
