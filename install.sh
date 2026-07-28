@@ -5,27 +5,47 @@
 #   curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh | sudo bash
 #
 # Parametrizavel por variaveis de ambiente:
-#   PLEXDEN_HOME   diretorio persistente da stack    (default /srv/plexden)
-#   PLEXDEN_USER   usuario que roda os servicos      (default plex)
+#   PLEXDEN_HOME   diretorio persistente da stack    (pergunta durante a instalacao,
+#                  default /srv/plexden — passe por env para pular a pergunta)
 #   PLEXDEN_REPO   owner/repo no GitHub              (default pedrorodbit/plexden)
 #   PLEXDEN_BRANCH branch                            (default main)
 #   PLEXDEN_RAW    origem dos arquivos               (default raw.githubusercontent)
 #                  aceita qualquer coisa que o curl entenda, inclusive file://
 #                  — util para instalar de um clone local ou de um espelho.
 #
-#   curl -fsSL .../install.sh | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
+# O usuario que roda os servicos NAO e mais escolhido por variavel: e sempre
+# quem esta executando a instalacao (quem chamou o 'sudo', ou o proprio root
+# se voce ja esta numa sessao root).
+#
+#   curl -fsSL .../install.sh | sudo PLEXDEN_HOME=/srv/plex bash
 #
 set -euo pipefail
 
 REPO="${PLEXDEN_REPO:-pedrorodbit/plexden}"
 BRANCH="${PLEXDEN_BRANCH:-main}"
 RAW="${PLEXDEN_RAW:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
-PLEXDEN_HOME="${PLEXDEN_HOME:-/srv/plexden}"
-PLEXDEN_USER="${PLEXDEN_USER:-plex}"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "rode como root:  curl -fsSL ${RAW}/install.sh | sudo bash" >&2
     exit 1
+fi
+
+# O usuario da stack e sempre quem esta rodando a instalacao: quem chamou
+# 'sudo' (SUDO_USER) ou, se ja e uma sessao root direta (sem sudo — e o caso
+# tipico de containers/CI), o proprio root.
+PLEXDEN_USER="${SUDO_USER:-$(id -un)}"
+
+# PLEXDEN_HOME e perguntado interativamente — passar a variavel de ambiente
+# pula a pergunta (util para automacao/CI). Sem terminal disponivel (pipe sem
+# tty controlador), cai no default sem travar a instalacao. O '2>/dev/null'
+# vem antes do '</dev/tty' de proposito: redirecoes sao aplicadas na ordem em
+# que aparecem, entao so assim a falha de abrir /dev/tty fica muda.
+if [ -z "${PLEXDEN_HOME:-}" ]; then
+    if read -r -p "Onde a stack deve viver? [/srv/plexden] " resposta 2>/dev/null </dev/tty; then
+        PLEXDEN_HOME="${resposta:-/srv/plexden}"
+    else
+        PLEXDEN_HOME=/srv/plexden
+    fi
 fi
 
 # O install.sh so precisa de curl (o provision.sh depois cuida do resto, ja de
@@ -38,8 +58,6 @@ ensure_curl() {
     if   command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq curl
     elif command -v dnf     >/dev/null 2>&1; then dnf install -y -q curl
     elif command -v yum     >/dev/null 2>&1; then yum install -y -q curl
-    elif command -v pacman  >/dev/null 2>&1; then pacman -Sy --noconfirm --needed curl
-    elif command -v zypper  >/dev/null 2>&1; then zypper -n install curl
     else echo "instale 'curl' manualmente e rode de novo." >&2; exit 1
     fi
     command -v curl >/dev/null 2>&1 || { echo "falha ao instalar curl." >&2; exit 1; }

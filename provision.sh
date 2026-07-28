@@ -12,14 +12,21 @@
 #
 set -u
 
-# Parametrizavel por variaveis de ambiente (defaults sensatos). Ex.:
-#   sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media ./provision.sh
-# Precedencia: variavel de ambiente > /etc/plexden.conf (instalacao ja feita) >
-# default. Assim, re-rodar num servidor ja configurado preserva os valores dele.
+# Parametrizavel por variavel de ambiente (default sensato). Ex.:
+#   sudo PLEXDEN_HOME=/srv/plex ./provision.sh
+# Precedencia do HOME: variavel de ambiente > /etc/plexden.conf (instalacao ja
+# feita) > default. Assim, re-rodar num servidor ja configurado preserva o
+# valor dele.
+# O usuario da stack NAO se escolhe por variavel: e sempre quem esta rodando o
+# script (SUDO_USER, ou o proprio root numa sessao root direta) na primeira
+# instalacao; num re-provisionamento, o valor ja gravado em /etc/plexden.conf
+# prevalece, para nao trocar o dono da stack so porque outro admin rodou o
+# script. PLEXDEN_USER no ambiente ainda e aceito — e assim que o install.sh
+# repassa o usuario que ele ja resolveu.
 _ENV_HOME="${PLEXDEN_HOME:-}"; _ENV_USER="${PLEXDEN_USER:-}"
 [ -r /etc/plexden.conf ] && . /etc/plexden.conf
 PERSIST="${_ENV_HOME:-${PLEXDEN_HOME:-/srv/plexden}}"
-PLEX_USER="${_ENV_USER:-${PLEXDEN_USER:-plex}}"
+PLEX_USER="${_ENV_USER:-${PLEXDEN_USER:-${SUDO_USER:-$(id -un)}}}"
 # UUID do tunnel: se vazio, e auto-detectado a partir de cloudflared/*.json.
 TUNNEL_UUID="${CF_TUNNEL_UUID:-}"
 
@@ -36,6 +43,10 @@ if [ "$CHECK" = 0 ]; then
     [ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
     # cria o usuario da stack se ainda nao existir
     id "$PLEX_USER" >/dev/null 2>&1 || { useradd -m -s /bin/bash "$PLEX_USER" && log "usuario $PLEX_USER criado"; }
+    # Home real do usuario (nao assumir /home/$PLEX_USER: para root, por
+    # exemplo, e /root).
+    PLEX_HOME=$(getent passwd "$PLEX_USER" | cut -d: -f6)
+    [ -n "$PLEX_HOME" ] || PLEX_HOME="/home/$PLEX_USER"
     # Avisa se $PERSIST nao parece estar num mount dedicado (dado que so ele
     # persiste a recriacao do container). Checa o proprio dir e o pai.
     mountpoint -q "$PERSIST" 2>/dev/null || \
@@ -75,9 +86,7 @@ cobertura_so() {
             fi ;;
         fedora)
             log "  Tier 1 — o CI instala a stack inteira em fedora:latest a cada push" ;;
-        opensuse-leap)
-            log "  Tier 1 — o CI instala a stack inteira em opensuse/leap a cada push" ;;
-        arch|almalinux)
+        almalinux)
             log "  Tier 2 — o CI so roda o dry-run aqui (deteccao e sintaxe)."
             log "           A instalacao em si nunca foi exercitada nesta distro." ;;
         alpine)
@@ -95,10 +104,6 @@ cobertura_so() {
                     log "  Tier 3 — familia Debian, testada via Debian stable e Ubuntu 24.04" ;;
                 *rhel*|*fedora*|*centos*)
                     log "  Tier 3 — familia RPM, testada via Fedora" ;;
-                *suse*)
-                    log "  Tier 3 — familia SUSE, testada via openSUSE Leap" ;;
-                *arch*)
-                    log "  Tier 3 — familia Arch, e o Arch so tem dry-run" ;;
                 *)
                     log "  SEM TIER — este SO nao aparece em lugar nenhum do CI."
                     log "           Se o gerenciador for detectado abaixo, deve funcionar," ;;
@@ -187,26 +192,23 @@ avaliar_maquina
 # 'plexden update' dependem disto; o resto do plexden e' agnostico.
 PKG=""
 detect_pkg() {
-    for m in apt-get dnf yum pacman zypper; do
+    for m in apt-get dnf yum; do
         command -v "$m" >/dev/null 2>&1 && { PKG="$m"; return 0; }
     done
-    fail "nenhum gerenciador de pacotes suportado (apt/dnf/yum/pacman/zypper)"
+    fail "nenhum gerenciador de pacotes suportado (apt/dnf/yum)"
 }
 
 pkg_refresh() {
     case "$PKG" in
         apt-get) apt-get update -qq ;;
-        pacman)  pacman -Sy --noconfirm >/dev/null ;;
-        zypper)  zypper -n refresh >/dev/null ;;
         dnf|yum) : ;;   # atualizam os metadados sob demanda
     esac
 }
 
 pkg_installed() {   # $1 = pacote
     case "$PKG" in
-        apt-get)        dpkg -s "$1" >/dev/null 2>&1 ;;
-        pacman)         pacman -Q "$1" >/dev/null 2>&1 ;;
-        dnf|yum|zypper) rpm -q "$1" >/dev/null 2>&1 ;;
+        apt-get) dpkg -s "$1" >/dev/null 2>&1 ;;
+        dnf|yum) rpm -q "$1" >/dev/null 2>&1 ;;
     esac
 }
 
@@ -215,8 +217,6 @@ pkg_install() {     # $@ = pacotes
         apt-get) DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
         dnf)     dnf install -y -q "$@" ;;
         yum)     yum install -y -q "$@" ;;
-        pacman)  pacman -S --noconfirm --needed "$@" ;;
-        zypper)  zypper -n install "$@" ;;
     esac
 }
 
@@ -234,27 +234,16 @@ log "== Pacotes =="
 detect_pkg
 log "  gerenciador detectado: $PKG"
 
-# Nomes que variam por familia: procps -> procps-ng (rpm/arch); python3 ->
-# python (arch); gnupg so e' preciso no apt (dearmor da chave do Plex).
-# util-linux (o 'su') e' essencial no Debian, mas nao vem numa Fedora/RHEL
-# enxuta — e a stack inteira sobe os servicos com 'su - $PLEX_USER'.
-# O zypper fica em caso proprio: no openSUSE o pacote e' 'procps', nao
-# 'procps-ng' — pedir o nome errado abortava a instalacao inteira.
+# Nomes que variam por familia: procps -> procps-ng (rpm); gnupg so e' preciso
+# no apt (dearmor da chave do Plex). util-linux (o 'su') e' essencial no
+# Debian, mas nao vem numa Fedora/RHEL enxuta — e a stack inteira sobe os
+# servicos com 'su - $PLEX_USER'.
 case "$PKG" in
     apt-get) base="curl wget ca-certificates sudo qbittorrent-nox gnupg procps psmisc python3" ;;
-    pacman)  base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python util-linux" ;;
     dnf|yum) base="curl wget ca-certificates sudo qbittorrent-nox procps-ng psmisc python3 util-linux" ;;
-    zypper)  base="curl wget ca-certificates sudo qbittorrent-nox procps psmisc python3 util-linux" ;;
 esac
 
-# Nome do pacote do Plex. O AUR empacota como 'plex-media-server'; em toda outra
-# familia e' 'plexmediaserver'. Checar o nome errado fazia o provision, no Arch,
-# repetir "instale pelo AUR" mesmo com o Plex ja instalado — quebrando a
-# idempotencia justo na distro em que o passo e manual.
-case "$PKG" in
-    pacman) PLEX_PKG=plex-media-server ;;
-    *)      PLEX_PKG=plexmediaserver ;;
-esac
+PLEX_PKG=plexmediaserver
 
 # Dry-run: reporta o plano e valida o plexden, sem tocar no sistema.
 if [ "$CHECK" = 1 ]; then
@@ -262,9 +251,8 @@ if [ "$CHECK" = 1 ]; then
     log "  pacotes base: $base"
     log "  pacote do plex: $PLEX_PKG"
     case "$PKG" in
-        apt-get)        log "  plex: repositorio apt assinado (distro=debian)" ;;
-        dnf|yum|zypper) log "  plex: repositorio rpm (.repo + rpm --import)" ;;
-        pacman)         log "  plex: AUR (instalacao manual)" ;;
+        apt-get) log "  plex: repositorio apt assinado (distro=debian)" ;;
+        dnf|yum) log "  plex: repositorio rpm (.repo + rpm --import)" ;;
     esac
     log "  cloudflared: binario estatico ($(uname -m))"
     sdir=$(cd "$(dirname "$0")" && pwd)
@@ -295,7 +283,7 @@ for c in su curl pgrep pkill; do
 done
 
 # ------------------------------------------------------------------- plex ---
-# Familia deb: repo apt assinado. Familia rpm: .repo + rpm --import. Arch: AUR.
+# Familia deb: repo apt assinado. Familia rpm: .repo + rpm --import.
 #
 # O repositorio e o caminho preferido (deixa o 'apt/dnf upgrade' cuidar do Plex),
 # mas ele nao e confiavel: em 2026 o apt do Debian 13+ passou a verificar com
@@ -348,9 +336,8 @@ install_plex() {
                 pkg_installed "$PLEX_PKG" || fail "falha ao instalar $PLEX_PKG"
             fi
             ;;
-        dnf|yum|zypper)
+        dnf|yum)
             repodir=/etc/yum.repos.d
-            [ "$PKG" = zypper ] && repodir=/etc/zypp/repos.d
             if rpm --import https://downloads.plex.tv/plex-keys/PlexSign.key 2>/dev/null; then
                 mkdir -p "$repodir"
                 cat > "$repodir/plex.repo" <<'REPO'
@@ -371,17 +358,12 @@ REPO
                 rm -f "$repodir/plex.repo"
                 plex_download redhat /tmp/plex.rpm || fail "download do Plex falhou"
                 case "$PKG" in
-                    dnf)    dnf install -y -q /tmp/plex.rpm ;;
-                    yum)    yum install -y -q /tmp/plex.rpm ;;
-                    zypper) zypper -n --no-gpg-checks install /tmp/plex.rpm ;;
+                    dnf) dnf install -y -q /tmp/plex.rpm ;;
+                    yum) yum install -y -q /tmp/plex.rpm ;;
                 esac
                 rm -f /tmp/plex.rpm
                 pkg_installed "$PLEX_PKG" || fail "falha ao instalar $PLEX_PKG"
             fi
-            ;;
-        pacman)
-            log "  Arch: o Plex nao tem pacote oficial nos repos."
-            log "        Instale pelo AUR (ex.: yay -S plex-media-server) e rode este script de novo."
             ;;
     esac
 }
@@ -419,13 +401,13 @@ log "  ok"
 log "== Plex =="
 # A logica de ambiente do Plex (variaveis + exec do binario) vive agora em
 # 'plexden plex-exec'. ~/bin/plex-start e so um stub que chama o plexden.
-mkdir -p /home/"$PLEX_USER"/bin
-cat > /home/"$PLEX_USER"/bin/plex-start <<'EOF'
+mkdir -p "$PLEX_HOME"/bin
+cat > "$PLEX_HOME"/bin/plex-start <<'EOF'
 #!/bin/sh
 exec /usr/local/bin/plexden plex-exec
 EOF
-chmod +x /home/"$PLEX_USER"/bin/plex-start
-chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/bin
+chmod +x "$PLEX_HOME"/bin/plex-start
+chown -R "$PLEX_USER:$PLEX_USER" "$PLEX_HOME"/bin
 
 if [ -f "$PERSIST/config/Plex Media Server/Preferences.xml" ]; then
     log "  config existente encontrada — claim e bibliotecas preservados"
@@ -455,7 +437,7 @@ log "  init stub instalado"
 
 # ----------------------------------------------------------- qbittorrent ----
 log "== qBittorrent =="
-QBCONF=/home/"$PLEX_USER"/.config/qBittorrent/qBittorrent.conf
+QBCONF="$PLEX_HOME"/.config/qBittorrent/qBittorrent.conf
 if [ ! -f "$QBCONF" ]; then
     mkdir -p "$(dirname "$QBCONF")"
     # qBittorrent 4.5 le Session\DefaultSavePath (nao Downloads\SavePath, que e
@@ -478,7 +460,7 @@ Session\\QueueingSystemEnabled=false
 WebUI\\Port=8081
 WebUI\\Username=admin
 EOF
-    chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/.config
+    chown -R "$PLEX_USER:$PLEX_USER" "$PLEX_HOME"/.config
     log "  config criada"
 else
     log "  config ja existe — preservada"
@@ -496,8 +478,8 @@ fi
 
 # Alinha usuario/senha da WebUI ao credentials.env. Sem isso, 'plexden qb' pode
 # nao logar numa instalacao nova: a serie 4.x usa 'adminadmin', mas a 5.x
-# (Fedora/Arch) gera uma senha aleatoria a cada boot ate uma ser definida. Faz
-# com o qB parado, para a edicao nao ser sobrescrita ao salvar a sessao.
+# (Fedora) gera uma senha aleatoria a cada boot ate uma ser definida. Faz com
+# o qB parado, para a edicao nao ser sobrescrita ao salvar a sessao.
 if [ -f "$PERSIST/credentials.env" ]; then
     QB_U=$(grep -E '^QB_USER=' "$PERSIST/credentials.env" | cut -d= -f2-)
     QB_P=$(grep -E '^QB_PASS=' "$PERSIST/credentials.env" | cut -d= -f2-)
@@ -546,7 +528,7 @@ if not done_pass:            # nao havia secao [Preferences]
     flush_prefs()
 open(conf, 'w', encoding='utf-8').write('\n'.join(result) + '\n')
 PY
-        chown -R "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/.config
+        chown -R "$PLEX_USER:$PLEX_USER" "$PLEX_HOME"/.config
         log "  usuario/senha da WebUI alinhados ao credentials.env"
     fi
 fi
@@ -619,9 +601,9 @@ if [ -f "$PERSIST/credentials.env" ]; then
     QB_P=$(grep -E '^QB_PASS=' "$PERSIST/credentials.env" | cut -d= -f2-)
     if [ -n "${QB_U:-}" ] && [ -n "${QB_P:-}" ]; then
         umask 077
-        printf 'QB_USER=%s\nQB_PASS=%s\n' "$QB_U" "$QB_P" > /home/"$PLEX_USER"/.qbcreds
-        chown "$PLEX_USER:$PLEX_USER" /home/"$PLEX_USER"/.qbcreds
-        chmod 600 /home/"$PLEX_USER"/.qbcreds
+        printf 'QB_USER=%s\nQB_PASS=%s\n' "$QB_U" "$QB_P" > "$PLEX_HOME"/.qbcreds
+        chown "$PLEX_USER:$PLEX_USER" "$PLEX_HOME"/.qbcreds
+        chmod 600 "$PLEX_HOME"/.qbcreds
         log "  ~/.qbcreds regenerado do credentials.env"
     else
         log "  AVISO: QB_USER/QB_PASS ausentes no credentials.env"

@@ -26,16 +26,20 @@ curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh
 ```
 
 > **Sobre distros:** o instalador (e o `plexden update`) detecta sozinho o seu
-> gerenciador de pacotes — `apt`, `dnf`/`yum`, `pacman` ou `zypper` — e segue a
-> partir daí. O Plex tem repositório oficial nas famílias Debian e RPM; no Arch
-> não há pacote oficial, então o instalador te aponta para o AUR e cuida do
-> resto. Detalhes na tabela de [distros suportadas](#distros-suportadas).
+> gerenciador de pacotes — `apt` ou `dnf`/`yum` — e segue a partir daí. O Plex
+> tem repositório oficial em ambas as famílias. Detalhes na tabela de
+> [distros suportadas](#distros-suportadas).
 
-Prefere outro caminho ou outro usuário? É só passar por variável de ambiente:
+O usuário que roda os serviços é sempre quem está executando a instalação —
+quem chamou o `sudo`, ou o próprio `root` se você já está numa sessão root.
+Não há mais como escolher outro usuário por variável de ambiente. Já o
+caminho onde a stack vive, o instalador **pergunta durante a instalação**
+(padrão `/srv/plexden`); prefere pular a pergunta? É só passar por variável
+de ambiente:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh \
-  | sudo PLEXDEN_HOME=/srv/plex PLEXDEN_USER=media bash
+  | sudo PLEXDEN_HOME=/srv/plex bash
 ```
 
 Antes de tocar em qualquer coisa, ele te diz duas coisas — e nenhuma delas
@@ -84,9 +88,7 @@ toda parte; o que muda é como o Plex chega.
 | Família | Distros | Gerenciador | Plex | Suporte |
 |---|---|---|---|---|
 | Debian | Debian, Ubuntu, Mint e derivados | `apt` | pacote oficial | **Tier 1** |
-| RPM (Red Hat) | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | **Tier 1** |
-| SUSE | openSUSE, SLES | `zypper` | pacote oficial | **Tier 1** |
-| Arch | Arch, Manjaro | `pacman` | via **AUR** (manual) | **Tier 2** |
+| RPM | Fedora, RHEL, Rocky, Alma, CentOS Stream | `dnf` / `yum` | pacote oficial | **Tier 1** |
 
 ### O que cada tier promete
 
@@ -95,9 +97,9 @@ esta diz com o que você pode contar:
 
 | Tier | Promessa | Onde vale |
 |---|---|---|
-| **1** | instalação completa roda a cada push; regressão segura o merge | Debian estável, Ubuntu 24.04, Fedora, openSUSE Leap |
-| **2** | só o dry-run roda a cada push; regressão vira issue, não bloqueia | Arch, AlmaLinux 9 |
-| **3** | melhor esforço, sem teste nenhum; issue e PR são bem-vindos | as demais distros das famílias acima — Mint, Rocky, SLES, Manjaro… |
+| **1** | instalação completa roda a cada push; regressão segura o merge | Debian estável, Ubuntu 24.04, Fedora |
+| **2** | só o dry-run roda a cada push; regressão vira issue, não bloqueia | AlmaLinux 9 |
+| **3** | melhor esforço, sem teste nenhum; issue e PR são bem-vindos | as demais distros das famílias acima — Mint, Rocky… |
 | **—** | fora de alcance, e não por falta de vontade | Alpine e qualquer sistema musl, NixOS, Gentoo |
 
 O tier vale para a **distro nomeada**, não para a família inteira. Mint herda o
@@ -127,34 +129,31 @@ vermelho. Os testes simulados não dependem dessa coincidência.
 São duas profundidades de teste de instalação, e a diferença é o que separa o
 Tier 1 do Tier 2:
 
-- **Instalação completa** — exatamente quatro imagens: `debian:stable-slim`,
-  `ubuntu:24.04`, `fedora:latest` e `opensuse/leap:latest`. Cada push instala a
-  stack do zero num container: baixa tudo, sobe os serviços e confere que o Plex
-  responde em `:32400`, que a WebUI do qBittorrent responde em `:8081` e
-  autentica com a senha gerada, que `pause`/`resume` de fato mudam o estado do
-  torrent, que o `postprocess` cria hardlink de verdade na biblioteca e que o
-  `links --apply` remove o hardlink cuja fonte sumiu — sem tocar num arquivo
-  colocado na biblioteca por fora.
+- **Instalação completa** — exatamente três imagens: `debian:stable-slim`,
+  `ubuntu:24.04` e `fedora:latest`. Cada push instala a stack do zero num
+  container: baixa tudo, sobe os serviços e confere que o Plex responde em
+  `:32400`, que a WebUI do qBittorrent responde em `:8081` e autentica com a
+  senha gerada, que `pause`/`resume` de fato mudam o estado do torrent, que o
+  `postprocess` cria hardlink de verdade na biblioteca e que o `links --apply`
+  remove o hardlink cuja fonte sumiu — sem tocar num arquivo colocado na
+  biblioteca por fora.
 
   O Ubuntu está aí por um motivo além de ser derivado popular: ele empacota a
-  série **4.x** do qBittorrent, enquanto as outras três trazem a **5.x**. Como o
+  série **4.x** do qBittorrent, enquanto as outras trazem a **5.x**. Como o
   qB 5 renomeou os endpoints de `pause`/`resume` para `stop`/`start`, é ele que
   garante que o lado antigo desse desvio também é exercitado a cada push.
-- **Dry-run** — o `provision.sh --check` roda em cinco imagens
-  (`debian:stable-slim`, `fedora:latest`, `almalinux:9`, `opensuse/leap:latest`,
-  `archlinux:latest`) e confere que o gerenciador certo foi detectado e que o
-  `plexden` compila sob o Python de lá. Para **Arch e AlmaLinux esse é o único
-  nível**: valida detecção e sintaxe, não a instalação em si — foi justamente uma
-  instalação de verdade que revelou que o openSUSE chama `procps` o que o Fedora
-  chama `procps-ng`.
+- **Dry-run** — o `provision.sh --check` roda também em `almalinux:9` e
+  confere que o gerenciador certo foi detectado e que o `plexden` compila sob
+  o Python de lá. Para **AlmaLinux esse é o único nível**: valida detecção e
+  sintaxe, não a instalação em si.
 
-Quatro ressalvas honestas:
+Três ressalvas honestas:
 
 - **Onde o Plex vem em `.rpm`, ele exige systemd.** Não é escolha nossa: o
   pacote tem um scriptlet que aborta a instalação com *"Plex Media Server
   requires systemd"*. O `.deb` não faz essa checagem — por isso a promessa de
-  rodar num sistema sem init vale para a família Debian, e não para RPM nem
-  SUSE. Num Fedora, RHEL ou openSUSE normal (que têm systemd) não muda nada.
+  rodar num sistema sem init vale para a família Debian, e não para RPM. Num
+  Fedora ou RHEL normal (que têm systemd) não muda nada.
 
 - **O repositório do Plex nem sempre é aceito — e aí entra o pacote oficial.** O
   instalador tenta o repositório primeiro, que é o caminho preferido (deixa o
@@ -168,16 +167,11 @@ Quatro ressalvas honestas:
   | Debian stable | ❌ recusado → cai no pacote oficial |
   | Ubuntu LTS | ✅ funciona |
   | Fedora | ✅ funciona |
-  | openSUSE Leap | ✅ funciona |
 
   Quando o repositório é recusado, o instalador **remove a entrada** — senão
   todos os seus `apt update` passariam a dar erro daí em diante — e baixa o
   pacote oficial direto. Só nesse caso o Plex deixa de ser atualizado pelo
   `apt upgrade`; aí use o `plexden update`.
-- **Arch** — o Plex não tem pacote oficial. O instalador prepara tudo e te manda
-  instalar pelo AUR (ex.: `yay -S plex-media-server`); depois é só rodar o
-  `provision.sh` de novo. O `plexden update`, no Arch, também aponta pro AUR em
-  vez de baixar `.deb`/`.rpm`.
 - **Fedora/RHEL** — se o SELinux estiver em *enforcing*, ele pode barrar o Plex
   de seguir os hardlinks da biblioteca ou de varrer pastas fora do lugar
   esperado. Se a biblioteca aparecer vazia mesmo com os arquivos lá, olhe o
@@ -299,10 +293,10 @@ O que cada um faz:
   real de 140 arquivos, a varredura identificou 93 pares e deixou 47 de fora.
 - **`update`** — o que o repositório entrega costuma ficar atrás da versão mais
   nova do Plex (e em algumas distros nem há repositório utilizável), então este
-  comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família;
-  no Arch, aponta pro AUR), faz backup do banco e reinstala. Não exige servidor
-  reivindicado: sem token ele usa o canal público, e com token respeita o canal
-  da sua conta. Se a instalação do pacote falhar, ele sai com erro apontando o
+  comando baixa o pacote oficial direto (`.deb` ou `.rpm`, conforme a família),
+  faz backup do banco e reinstala. Não exige servidor reivindicado: sem token
+  ele usa o canal público, e com token respeita o canal da sua conta. Se a
+  instalação do pacote falhar, ele sai com erro apontando o
   backup — em vez de deixar você com o Plex parado e um "Pronto" na tela.
 
 ## Problemas comuns
@@ -357,11 +351,12 @@ O `plexden` procura configuração nesta ordem: variável de ambiente →
 | Variável | Default | Para quê |
 |---|---|---|
 | `PLEXDEN_HOME` | `/srv/plexden` | onde a stack vive (de preferência, um volume que persista) |
-| `PLEXDEN_USER` | `plex` | usuário que roda os serviços |
+| `PLEXDEN_USER` | *(atual)* | usuário que roda os serviços — sempre quem executou a instalação, não é escolhido à parte |
 | `CF_TUNNEL_UUID` | *(auto)* | UUID do túnel; se em branco, ele acha sozinho pelo `*.json` em `cloudflared/` |
 
 O `provision.sh` grava esses valores em `/etc/plexden.conf` — então, se você
-rodar de novo mais tarde, ele lembra do que você escolheu.
+rodar de novo mais tarde (para reprovisionar), ele lembra do que foi
+resolvido na primeira instalação, mesmo que outro admin rode o comando depois.
 
 ## Como as peças se encaixam
 

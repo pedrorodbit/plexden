@@ -1105,7 +1105,7 @@ def ensure_init_stub():
 # ------------------------------------------- gerenciador de pacotes (update) --
 # Espelha a abstracao do provision.sh, mas em Python e so para o 'update'.
 def _detect_pkg():
-    for m in ("apt-get", "dnf", "yum", "pacman", "zypper"):
+    for m in ("apt-get", "dnf", "yum"):
         if shutil.which(m):
             return m
     return None
@@ -1114,10 +1114,8 @@ def _detect_pkg():
 def _pkg_family(mgr):
     if mgr == "apt-get":
         return "deb"
-    if mgr in ("dnf", "yum", "zypper"):
+    if mgr in ("dnf", "yum"):
         return "rpm"
-    if mgr == "pacman":
-        return "arch"
     return None
 
 
@@ -1166,8 +1164,6 @@ def _plex_install_file(mgr, fam, path):
             r = sh(["dnf", "install", "-y", path])
         elif mgr == "yum":
             r = sh(["yum", "install", "-y", path])
-        elif mgr == "zypper":
-            r = sh(["zypper", "-n", "install", "--allow-unsigned-rpm", path])
         else:
             r = sh(["rpm", "-Uvh", path])
         return r.returncode == 0
@@ -1190,10 +1186,6 @@ def cmd_update(args):
     if fam is None:
         print("ERRO: gerenciador de pacotes nao reconhecido para update automatico")
         return 1
-    if fam == "arch":
-        print("No Arch o Plex vem do AUR — atualize por la:")
-        print("  yay -S plex-media-server   (ou o helper de AUR que voce usar)")
-        return 0
 
     curver = _plex_version_installed(fam)
     print(f"== Versao instalada: {curver}  (via {mgr})")

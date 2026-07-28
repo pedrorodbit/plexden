@@ -44,23 +44,12 @@ jobs:
         include:
           - image: debian:stable-slim
             pkg: apt-get
-            plexpkg: plexmediaserver
             tier: 1
           - image: fedora:latest
             pkg: dnf
-            plexpkg: plexmediaserver
             tier: 1
           - image: almalinux:9
             pkg: dnf
-            plexpkg: plexmediaserver
-            tier: 2
-          - image: opensuse/leap:latest
-            pkg: zypper
-            plexpkg: plexmediaserver
-            tier: 1
-          - image: archlinux:latest
-            pkg: pacman
-            plexpkg: plex-media-server
             tier: 2
     container:
       image: ${{ matrix.image }}
@@ -72,14 +61,6 @@ jobs:
             apt-get install -y -qq python3 git
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y -q python3 git
-          elif command -v zypper >/dev/null 2>&1; then
-            # sem o refresh, os metadados da imagem ficam atras dos mirrors e a
-            # instalacao morre com 404 em pacote que ja rodou de versao
-            zypper -n --gpg-auto-import-keys refresh
-            zypper -n install python3 git
-          elif command -v pacman >/dev/null 2>&1; then
-            pacman -Sy --noconfirm --needed archlinux-keyring
-            pacman -S  --noconfirm --needed python git
           fi
 
       - uses: actions/checkout@v5
@@ -90,9 +71,7 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "gerenciador detectado: ${{ matrix.pkg }}"
           echo "$out" | grep -q "plexden: sintaxe Python OK"
-          # no Arch o pacote e plex-media-server: checar o nome errado fazia o
-          # provision repetir "instale pelo AUR" com o Plex ja instalado
-          echo "$out" | grep -q "pacote do plex: ${{ matrix.plexpkg }}"
+          echo "$out" | grep -q "pacote do plex: plexmediaserver"
           # o tier anunciado ao usuario precisa dizer a verdade sobre ESTA
           # distro: 1 so onde o e2e instala de fato, 2 onde e' so dry-run
           echo "$out" | grep -q "Tier ${{ matrix.tier }} —"
@@ -109,7 +88,7 @@ jobs:
   # sistema.
   #
   # Duas imagens: o Debian estavel e o Ubuntu LTS. O Ubuntu nao esta ai so por
-  # ser derivado popular — ele empacota uma serie 4.x do qBittorrent, e as tres
+  # ser derivado popular — ele empacota uma serie 4.x do qBittorrent, e as
   # outras imagens do CI trazem 5.x. Sem ele, o ramo pause/resume do gate de
   # versao da Web API nunca seria exercitado: so o stop/start do qB 5.
   e2e-deb:
@@ -143,7 +122,6 @@ jobs:
       - name: install.sh completo (instala e sobe a stack)
         env:
           PLEXDEN_HOME: /srv/plexden
-          PLEXDEN_USER: plex
         run: PLEXDEN_RAW="file://$PWD" bash install.sh
 
       - name: Bateria de verificacao
@@ -153,16 +131,16 @@ jobs:
         if: failure()
         run: |
           tail -n 60 /srv/plexden/config/*.log 2>/dev/null || true
-          ls -la /srv/plexden /home/plex 2>/dev/null || true
-          cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
+          ls -la /srv/plexden /root 2>/dev/null || true
+          cat /root/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
 
   # ------------------------------------------------------ e2e com systemd ---
-  # Mesmo teste nas familias que empacotam o Plex em .rpm. Aqui nao da para usar
+  # Mesma familia RPM, mas com o Plex empacotado em .rpm. Aqui nao da para usar
   # 'container:' como no Debian: o .rpm do Plex tem um scriptlet %pre que aborta
   # a instalacao com "Plex Media Server requires systemd" — o .deb nao faz isso.
   # Entao o job constroi uma imagem com systemd e a roda privilegiada, para o
-  # PID 1 ser systemd de verdade. Sem isso, os ramos dnf e zypper do
-  # provision.sh sao impossiveis de exercitar.
+  # PID 1 ser systemd de verdade. Sem isso, o ramo dnf do provision.sh e
+  # impossivel de exercitar.
   e2e-systemd:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -172,8 +150,6 @@ jobs:
         include:
           - image: fedora:latest
             deps: dnf -y install systemd procps-ng && dnf clean all
-          - image: opensuse/leap:latest
-            deps: zypper -n --gpg-auto-import-keys refresh && zypper -n install systemd procps && zypper clean -a
     steps:
       - uses: actions/checkout@v5
 
@@ -203,7 +179,7 @@ jobs:
       # /srv/plexden do container — igual ao que faz baixando da internet.
       - name: install.sh completo (instala e sobe a stack)
         run: |
-          docker exec -e PLEXDEN_HOME=/srv/plexden -e PLEXDEN_USER=plex \
+          docker exec -e PLEXDEN_HOME=/srv/plexden \
             -e PLEXDEN_RAW=file:///repo plexden-e2e bash /repo/install.sh
 
       - name: Bateria de verificacao
@@ -213,8 +189,8 @@ jobs:
         if: failure()
         run: |
           docker exec plexden-e2e sh -c 'tail -n 60 /srv/plexden/config/*.log' 2>/dev/null || true
-          docker exec plexden-e2e ls -la /srv/plexden /home/plex 2>/dev/null || true
-          docker exec plexden-e2e cat /home/plex/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
+          docker exec plexden-e2e ls -la /srv/plexden /root 2>/dev/null || true
+          docker exec plexden-e2e cat /root/.config/qBittorrent/qBittorrent.conf 2>/dev/null || true
 
   # ------------------------------------------------------ urls publicas ---
   # O one-liner do README depende dessas URLs; os jobs e2e instalam do checkout

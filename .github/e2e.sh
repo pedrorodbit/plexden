@@ -11,7 +11,12 @@ set -euo pipefail
 
 REPO="${1:?uso: e2e.sh <diretorio-do-checkout>}"
 PERSIST=/srv/plexden
-PLEX_USER=plex
+# O usuario da stack nao e mais fixo (era sempre 'plex'): agora e quem rodou o
+# install.sh, e nos jobs de CI isso e' 'root' (o container ja roda como root,
+# sem sudo). Le do /etc/plexden.conf que o provision.sh gravou, em vez de
+# assumir um nome.
+PLEX_USER=$(sed -n 's/^PLEXDEN_USER=//p' /etc/plexden.conf)
+PLEX_HOME=$(getent passwd "$PLEX_USER" | cut -d: -f6)
 QB=http://127.0.0.1:8081/api/v2
 COOKIE=/tmp/qb.cookie
 QB_USER=citest
@@ -35,7 +40,7 @@ diagnostico() {
     curl -s --max-time 10 "$QB/app/webapiVersion" || true; echo
     echo "--- [Preferences] do qBittorrent.conf ---"
     grep -A15 '\[Preferences\]' \
-      "/home/$PLEX_USER/.config/qBittorrent/qBittorrent.conf" 2>/dev/null \
+      "$PLEX_HOME/.config/qBittorrent/qBittorrent.conf" 2>/dev/null \
       | sed 's/\(Password_PBKDF2=\).*/\1<omitido>/' | head -15 || true
 }
 fail() { echo "FALHOU: $*" >&2; diagnostico >&2; exit 1; }
@@ -60,7 +65,7 @@ pkg_has plexmediaserver || fail "plexmediaserver nao instalado"
 pkg_has qbittorrent-nox || fail "qbittorrent-nox nao instalado"
 id "$PLEX_USER" >/dev/null
 for f in /etc/init.d/plexmediaserver /usr/local/bin/plex-stack-start \
-         "/home/$PLEX_USER/bin/plex-start"; do
+         "$PLEX_HOME/bin/plex-start"; do
     [ -x "$f" ] || fail "$f nao e executavel"
 done
 grep -qx "PLEXDEN_HOME=$PERSIST" /etc/plexden.conf || fail "/etc/plexden.conf errado"
@@ -71,7 +76,7 @@ for d in movies series config scripts cloudflared \
 done
 [ "$(stat -c %U "$PERSIST/movies")" = "$PLEX_USER" ] || fail "dono errado em movies/"
 [ "$(stat -c %a "$PERSIST/cloudflared")" = 700 ] || fail "cloudflared/ deveria ser 700"
-grep -q 'plexden postprocess' "/home/$PLEX_USER/.config/qBittorrent/qBittorrent.conf" \
+grep -q 'plexden postprocess' "$PLEX_HOME/.config/qBittorrent/qBittorrent.conf" \
     || fail "AutoRun nao aponta para o plexden"
 echo "  ok"
 
@@ -96,9 +101,9 @@ log "credentials.env -> reprovisiona -> 'plexden qb' loga"
 printf 'QB_USER=%s\nQB_PASS=%s\n' "$QB_USER" "$QB_PASS" > "$PERSIST/credentials.env"
 bash "$PERSIST/provision.sh"
 [ "$(stat -c %a "$PERSIST/credentials.env")" = 600 ] || fail "credentials.env sem 600"
-grep -qx "QB_USER=$QB_USER" "/home/$PLEX_USER/.qbcreds" || fail ".qbcreds nao regenerado"
+grep -qx "QB_USER=$QB_USER" "$PLEX_HOME/.qbcreds" || fail ".qbcreds nao regenerado"
 grep -q 'WebUI\\Password_PBKDF2=' \
-    "/home/$PLEX_USER/.config/qBittorrent/qBittorrent.conf" || fail "senha nao sedeada"
+    "$PLEX_HOME/.config/qBittorrent/qBittorrent.conf" || fail "senha nao sedeada"
 # o que importa: a senha sedeada realmente autentica
 su - "$PLEX_USER" -c 'plexden qb list' || fail "'plexden qb list' nao autenticou"
 
