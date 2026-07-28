@@ -17,8 +17,6 @@
 # quem esta executando a instalacao (quem chamou o 'sudo', ou o proprio root
 # se voce ja esta numa sessao root).
 #
-#   curl -fsSL .../install.sh | sudo PLEXDEN_HOME=/srv/plex bash
-#
 set -euo pipefail
 
 REPO="${PLEXDEN_REPO:-pedrorodbit/plexden}"

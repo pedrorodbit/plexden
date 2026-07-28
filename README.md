@@ -34,13 +34,9 @@ O usuário que roda os serviços é sempre quem está executando a instalação 
 quem chamou o `sudo`, ou o próprio `root` se você já está numa sessão root.
 Não há mais como escolher outro usuário por variável de ambiente. Já o
 caminho onde a stack vive, o instalador **pergunta durante a instalação**
-(padrão `/srv/plexden`); prefere pular a pergunta? É só passar por variável
-de ambiente:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/pedrorodbit/plexden/main/install.sh \
-  | sudo PLEXDEN_HOME=/srv/plex bash
-```
+(padrão `/srv/plexden`) — não precisa passar nada, só responder quando ele
+perguntar. A variável `PLEXDEN_HOME` só entra em cena para pular a pergunta
+em automação/CI.
 
 Antes de tocar em qualquer coisa, ele te diz duas coisas — e nenhuma delas
 impede a instalação, só informa:
