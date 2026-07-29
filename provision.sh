@@ -257,7 +257,12 @@ pkg_refresh() {
 
 pkg_installed() {   # $1 = pacote
     case "$PKG" in
-        apt-get) dpkg -s "$1" >/dev/null 2>&1 ;;
+        # 'dpkg -s' devolve sucesso mesmo com o pacote so removido (estado
+        # "deinstall ok config-files", o que 'apt-get remove' — sem --purge —
+        # deixa para tras, exatamente o que o 'plexden uninstall' faz de
+        # proposito). Sem checar o Status de verdade, um pacote removido e
+        # tratado como instalado e nunca e reinstalado.
+        apt-get) [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ] ;;
         dnf|yum) rpm -q "$1" >/dev/null 2>&1 ;;
     esac
 }
