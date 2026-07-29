@@ -48,19 +48,29 @@ fail() { echo "ERRO: $*" >&2; exit 1; }
 # esquerda pra direita).
 read_tty() {   # $1 = prompt
     local resposta
-    if read -r -p "$1" resposta 2>/dev/null </dev/tty; then
+    # O prompt vai pro stderr, IMPRESSO A PARTE do 'read': 'read -p' escreve o
+    # proprio prompt em stderr, entao um '2>/dev/null' no mesmo comando
+    # (necessario para calar o erro "No such device or address" quando
+    # /dev/tty nao existe) apagava a pergunta junto — mesmo com a leitura
+    # funcionando. Tambem nao pode ir por stdout: quem chama captura isso via
+    # 'resposta=$(read_tty ...)', e a pergunta entraria na resposta.
+    printf '%s' "$1" >&2
+    if read -r resposta 2>/dev/null </dev/tty; then
         printf '%s' "$resposta"
         return 0
     fi
+    echo >&2
     return 1
 }
 read_tty_secreto() {   # $1 = prompt; nao ecoa o que foi digitado
     local resposta
-    if read -r -s -p "$1" resposta 2>/dev/null </dev/tty; then
+    printf '%s' "$1" >&2
+    if read -r -s resposta 2>/dev/null </dev/tty; then
         echo >/dev/tty
         printf '%s' "$resposta"
         return 0
     fi
+    echo >&2
     return 1
 }
 
@@ -491,8 +501,20 @@ setup_cloudflare_tunnel() {
     uuid=$(printf '%s\n' "$saida" \
              | sed -n 's/.* with id \([0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}\).*/\1/p' \
              | tail -1)
+
+    # 'tunnel create' recusa nome duplicado na conta (ex.: reinstalacao, ou o
+    # tunnel foi criado por fora). Em vez de so desistir, procura o UUID pelo
+    # nome e reaproveita se a credencial dele ja estiver neste servidor.
+    if [ -z "$uuid" ] && printf '%s\n' "$saida" | grep -qi 'already exists'; then
+        uuid=$(timeout 30 cloudflared tunnel list </dev/tty 2>/dev/null \
+                 | awk -v n="$nome" '$2 == n { print $1; exit }')
+        [ -n "$uuid" ] && log "  tunnel '$nome' ja existia na conta (UUID $uuid)"
+    fi
+
     if [ -z "$uuid" ] || [ ! -f "$certdir/$uuid.json" ]; then
-        log "  nao consegui criar o tunnel (ou ele ja existia com outro nome) — pulado"
+        log "  nao consegui obter as credenciais do tunnel '$nome' — pulado"
+        log "  (se ele ja existe na conta mas sem credencial aqui, escolha"
+        log "   outro nome ou apague o antigo no painel da Cloudflare)"
         return 0
     fi
 

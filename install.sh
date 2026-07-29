@@ -43,13 +43,17 @@ fi
 
 # PLEXDEN_HOME e perguntado interativamente — passar a variavel de ambiente
 # pula a pergunta (util para automacao/CI). Sem terminal disponivel (pipe sem
-# tty controlador), cai no default sem travar a instalacao. O '2>/dev/null'
-# vem antes do '</dev/tty' de proposito: redirecoes sao aplicadas na ordem em
-# que aparecem, entao so assim a falha de abrir /dev/tty fica muda.
+# tty controlador), cai no default sem travar a instalacao. O prompt vai pro
+# stderr, IMPRESSO A PARTE do 'read': 'read -p' escreve o proprio prompt em
+# stderr, entao um '2>/dev/null' no mesmo comando (necessario para calar o
+# erro "No such device or address" quando /dev/tty nao existe) apaga a
+# pergunta junto — mesmo quando a leitura funciona. Ninguem via a pergunta.
 if [ -z "${PLEXDEN_HOME:-}" ]; then
-    if read -r -p "Onde a stack deve viver? [/srv/plexden] " resposta 2>/dev/null </dev/tty; then
+    printf 'Onde a stack deve viver? [/srv/plexden] ' >&2
+    if read -r resposta 2>/dev/null </dev/tty; then
         PLEXDEN_HOME="${resposta:-/srv/plexden}"
     else
+        echo >&2
         PLEXDEN_HOME=/srv/plexden
     fi
 fi
