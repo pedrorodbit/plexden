@@ -227,11 +227,7 @@ def _pidfile_writable():
         return "/tmp/plexmediaserver.pid"
 
 
-def plex_process_start():
-    pid = _plex_running_pid()
-    if pid:
-        print(f"  Plex         ja rodando (pid {pid})")
-        return True
+def _plex_lancar():
     pidfile = _pidfile_writable()
     starter = f"{sys.argv[0]} plex-exec"
     if current_user() == PLEX_USER:
@@ -244,11 +240,34 @@ def plex_process_start():
                 f.write(r.stdout.strip() + "\n")
         except OSError:
             pass
-    for i in range(1, 61):
-        if plex_ok():
-            print(f"  Plex         iniciado ({i}s)")
-            return True
-        time.sleep(1)
+
+
+def plex_process_start():
+    pid = _plex_running_pid()
+    if pid:
+        print(f"  Plex         ja rodando (pid {pid})")
+        return True
+
+    # Visto em instalacao real: logo apos o pacote ser instalado, a primeira
+    # tentativa de subir pode morrer quase na hora (ex.: "Critical:
+    # libusb_init failed") e nunca mais responder HTTP — rodar de novo, sem
+    # mais nada mudar, funciona. Uma unica tentativa extra em vez de esperar
+    # os 60s inteiros so pra anunciar falha num problema transitorio.
+    for tentativa in range(2):
+        _plex_lancar()
+        caiu_no_boot = False
+        for i in range(1, 61):
+            if plex_ok():
+                print(f"  Plex         iniciado ({i}s)")
+                return True
+            if i > 3 and not _plex_running_pid():
+                caiu_no_boot = True
+                break
+            time.sleep(1)
+        if caiu_no_boot and tentativa == 0:
+            print(f"  Plex         caiu logo no boot (veja {PLEX_LOGFILE}) — tentando de novo")
+            continue
+        break
     print(f"  Plex         FALHOU (veja {PLEX_LOGFILE})")
     return False
 
