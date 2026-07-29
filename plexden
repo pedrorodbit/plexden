@@ -1135,8 +1135,14 @@ def _plex_build():
 
 def _plex_version_installed(fam):
     if fam == "deb":
-        return sh(["dpkg-query", "-W", "-f=${Version}",
-                   "plexmediaserver"]).stdout.strip()
+        # 'dpkg-query -W' devolve a Version mesmo com o pacote so removido
+        # (estado "deinstall ok config-files", o que 'apt-get remove' sem
+        # --purge deixa para tras — e o 'plexden uninstall' usa remove, de
+        # proposito). Sem checar o Status tambem, um pacote removido parece
+        # instalado tanto para o 'update' quanto para o 'doctor'.
+        r = sh(["dpkg-query", "-W", "-f=${Status}\t${Version}", "plexmediaserver"])
+        status, _, version = r.stdout.strip().partition("\t")
+        return version if status == "install ok installed" else ""
     if fam == "rpm":
         return sh(["rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}",
                    "plexmediaserver"]).stdout.strip()

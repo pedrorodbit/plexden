@@ -15,7 +15,8 @@
 #
 # O usuario que roda os servicos NAO e mais escolhido por variavel: e sempre
 # quem esta executando a instalacao (quem chamou o 'sudo', ou o proprio root
-# se voce ja esta numa sessao root).
+# se voce ja esta numa sessao root) — exceto numa reinstalacao, onde o dono
+# ja gravado em /etc/plexden.conf prevalece.
 #
 set -euo pipefail
 
@@ -30,8 +31,15 @@ fi
 
 # O usuario da stack e sempre quem esta rodando a instalacao: quem chamou
 # 'sudo' (SUDO_USER) ou, se ja e uma sessao root direta (sem sudo — e o caso
-# tipico de containers/CI), o proprio root.
+# tipico de containers/CI), o proprio root. Excecao: numa REINSTALACAO (ja
+# existe /etc/plexden.conf de uma vez anterior), o dono ja gravado prevalece
+# — senao rodar o install.sh de novo troca o dono da stack so por quem
+# executou desta vez, o que muda a propriedade de todo o $PLEXDEN_HOME.
 PLEXDEN_USER="${SUDO_USER:-$(id -un)}"
+if [ -r /etc/plexden.conf ]; then
+    _conf_user=$(sed -n 's/^PLEXDEN_USER=//p' /etc/plexden.conf)
+    [ -n "$_conf_user" ] && PLEXDEN_USER="$_conf_user"
+fi
 
 # PLEXDEN_HOME e perguntado interativamente — passar a variavel de ambiente
 # pula a pergunta (util para automacao/CI). Sem terminal disponivel (pipe sem
