@@ -18,6 +18,15 @@ também roda numa boa, e você pode deixar o systemd cuidar do autostart. Em
 qualquer um dos dois casos, o `plexden services` gerencia os três serviços —
 inclusive o cloudflared, detectando sozinho se ele roda via systemd ou SysV.
 
+- [Instalando](#instalando)
+- [Distros suportadas](#distros-suportadas)
+- [Os segredos ficam com você](#os-segredos-ficam-com-você)
+- [O dia a dia](#o-dia-a-dia)
+- [Problemas comuns](#problemas-comuns)
+- [Ajustando ao seu setup](#ajustando-ao-seu-setup)
+- [Como as peças se encaixam](#como-as-peças-se-encaixam)
+- [Sobre a autoria](#sobre-a-autoria) · [Licença](#licença)
+
 ## Instalando
 
 Numa máquina nova, como root, uma linha resolve:
@@ -82,10 +91,10 @@ configurado ainda é normal.
 ## Distros suportadas
 
 O `plexden` é escrito só com a biblioteca padrão do Python, então roda em
-qualquer lugar que tenha `python3`. Quem depende da distro é a **instalação**
-(o `provision.sh`) e o **`plexden update`** — e os dois detectam o gerenciador
-sozinhos. Os pacotes base e o `cloudflared` (binário estático) são iguais em
-toda parte; o que muda é como o Plex chega até você.
+qualquer lugar que tenha `python3`. Quem depende da distro é a instalação e o
+`update` (veja a detecção automática [acima](#instalando)). Os pacotes base e
+o `cloudflared` (binário estático) são iguais em toda parte; o que muda é como
+o Plex chega até você.
 
 | Família | Distros | Gerenciador | Plex | Suporte |
 |---|---|---|---|---|
@@ -200,79 +209,85 @@ pendente.
 Se você pulou alguma pergunta, ou está automatizando a instalação, dá pra
 fazer cada uma na mão a qualquer momento:
 
-1. **qBittorrent** — copie o modelo e coloque sua senha:
-   ```bash
-   cp $PLEXDEN_HOME/credentials.env.example $PLEXDEN_HOME/credentials.env
-   chmod 600 $PLEXDEN_HOME/credentials.env   # edite QB_USER / QB_PASS
-   sudo $PLEXDEN_HOME/provision.sh           # regenera ~/.qbcreds e a senha da WebUI
-   ```
-2. **Plex** — um servidor recém-instalado nasce "não reivindicado". Pegue um token
-   em [plex.tv/claim](https://plex.tv/claim) (ele expira em 4 minutos) e:
-   ```bash
-   curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
-   sudo plexden services restart
-   ```
-3. **Cloudflare Tunnel** (opcional) — o `provision.sh` já instalou o binário
-   do `cloudflared`; falta só autenticar, criar o túnel e apontar as rotas.
-   Isso é feito uma vez, na própria máquina do servidor:
+### qBittorrent
 
-   ```bash
-   cloudflared tunnel login                  # abre um link; autorize no navegador
-   cloudflared tunnel create plexden         # gera o <UUID>.json e imprime o UUID
-   ```
+Copie o modelo e coloque sua senha:
 
-   O `login` deixa um `cert.pem` em `~/.cloudflared/`, e o `create` deixa um
-   `<UUID>.json` no mesmo lugar. Mova os dois para dentro do volume persistente
-   (é de lá que o `provision.sh` restaura tudo depois, inclusive numa
-   reinstalação do zero) e escreva o `config.yml` ao lado:
+```bash
+cp $PLEXDEN_HOME/credentials.env.example $PLEXDEN_HOME/credentials.env
+chmod 600 $PLEXDEN_HOME/credentials.env   # edite QB_USER / QB_PASS
+sudo $PLEXDEN_HOME/provision.sh           # regenera ~/.qbcreds e a senha da WebUI
+```
 
-   ```bash
-   mv ~/.cloudflared/cert.pem ~/.cloudflared/*.json "$PLEXDEN_HOME/cloudflared/"
-   cat > "$PLEXDEN_HOME/cloudflared/config.yml" <<EOF
-   tunnel: <UUID>
-   credentials-file: /etc/cloudflared/<UUID>.json
+### Plex
 
-   ingress:
-     - hostname: plex.seudominio.com
-       service: https://localhost:32400
-       originRequest:
-         noTLSVerify: true
-     - hostname: qb.seudominio.com
-       service: http://localhost:8081
-     - service: http_status:404
-   EOF
-   ```
+Um servidor recém-instalado nasce "não reivindicado". Pegue um token em
+[plex.tv/claim](https://plex.tv/claim) (ele expira em 4 minutos) e:
 
-   Falta apontar o DNS para o túnel (também uma vez só, por hostname):
+```bash
+curl -s -X POST "http://127.0.0.1:32400/myplex/claim?token=SEU_TOKEN"
+sudo plexden services restart
+```
 
-   ```bash
-   cloudflared tunnel route dns plexden plex.seudominio.com
-   cloudflared tunnel route dns plexden qb.seudominio.com
-   ```
+### Cloudflare Tunnel (opcional)
 
-   Com os três arquivos (`cert.pem`, `<UUID>.json`, `config.yml`) no lugar,
-   rode o `provision.sh` de novo — ele copia tudo para `/etc/cloudflared/` e
-   instala o serviço:
+O `provision.sh` já instalou o binário do `cloudflared`; falta só autenticar,
+criar o túnel e apontar as rotas — uma vez só, na própria máquina do servidor
+(é exatamente isso que o assistente interativo faz por você, só perguntando em
+vez de você digitar cada comando):
 
-   ```bash
-   sudo $PLEXDEN_HOME/provision.sh
-   plexden services status              # cloudflared deve aparecer rodando
-   ```
+```bash
+cloudflared tunnel login                  # abre um link; autorize no navegador
+cloudflared tunnel create plexden         # gera o <UUID>.json e imprime o UUID
+```
 
-   (é exatamente isso que o assistente interativo faz por você, só que
-   perguntando em vez de você digitar os comandos.)
+O `login` deixa um `cert.pem` em `~/.cloudflared/`, e o `create` deixa um
+`<UUID>.json` no mesmo lugar. Mova os dois para dentro do volume persistente
+(é de lá que o `provision.sh` restaura tudo depois, inclusive numa
+reinstalação do zero), escreva o `config.yml` ao lado e aponte o DNS:
 
-   > ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
-   > `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do
-   > redirect da web app pelo protocolo de entrada — com origem `http://` ele
-   > devolve `Location: http://.../web/index.html`, e se seu domínio for
-   > HSTS-preloaded o navegador recusa o redirect e a web app não carrega (a
-   > API em `/identity` continua respondendo 200 normalmente, o que engana).
-   > Como o certificado interno do Plex é `*.plex.direct`, a rota também
-   > precisa de `originRequest.noTLSVerify: true`. O qBittorrent não tem essa
-   > exigência — pode ir com `http://` de boa.
+```bash
+mv ~/.cloudflared/cert.pem ~/.cloudflared/*.json "$PLEXDEN_HOME/cloudflared/"
+cat > "$PLEXDEN_HOME/cloudflared/config.yml" <<EOF
+tunnel: <UUID>
+credentials-file: /etc/cloudflared/<UUID>.json
+
+ingress:
+  - hostname: plex.seudominio.com
+    service: https://localhost:32400
+    originRequest:
+      noTLSVerify: true
+  - hostname: qb.seudominio.com
+    service: http://localhost:8081
+  - service: http_status:404
+EOF
+
+cloudflared tunnel route dns plexden plex.seudominio.com
+cloudflared tunnel route dns plexden qb.seudominio.com
+```
+
+Com os três arquivos (`cert.pem`, `<UUID>.json`, `config.yml`) no lugar, rode
+o `provision.sh` de novo — ele copia tudo para `/etc/cloudflared/` e instala
+o serviço:
+
+```bash
+sudo $PLEXDEN_HOME/provision.sh
+plexden services status              # cloudflared deve aparecer rodando
+```
+
+> ⚠️ **A rota do Plex no `config.yml` precisa apontar para `https://`, não
+> `http://`.** O Plex serve TLS na mesma porta 32400 e decide o esquema do
+> redirect da web app pelo protocolo de entrada — com origem `http://` ele
+> devolve `Location: http://.../web/index.html`, e se seu domínio for
+> HSTS-preloaded o navegador recusa o redirect e a web app não carrega (a
+> API em `/identity` continua respondendo 200 normalmente, o que engana).
+> Como o certificado interno do Plex é `*.plex.direct`, a rota também
+> precisa de `originRequest.noTLSVerify: true`. O qBittorrent não tem essa
+> exigência — pode ir com `http://` de boa.
 
 ## O dia a dia
+
+### Referência rápida
 
 ```bash
 sudo plexden services {start|stop|restart|watch [segundos]}
@@ -286,7 +301,7 @@ sudo plexden uninstall [--purge] [--yes]     # desinstala a stack (--purge apaga
 plexden doctor                                # diagnóstico rápido, só leitura
 ```
 
-O que cada comando faz:
+### O que cada comando faz
 
 - **`services`** — sobe, derruba e vigia Plex + qBittorrent + cloudflared. Ele
   checa a saúde de verdade (por HTTP, não só "o processo existe"), então um
@@ -417,7 +432,7 @@ troca de senha na conta Plex
 Diagnóstico — o campo `claimed` cai para `"0"` em `/identity`, e um `curl` no
 `/api/v2/user` da conta Plex com o token antigo responde `401`. A correção é
 só reivindicar de novo (token novo de [plex.tv/claim](https://plex.tv/claim),
-mesmo comando do passo 2 acima) — **não mexa no túnel**, a configuração dele
+mesmo comando da seção [Plex](#plex) acima) — **não mexa no túnel**, a configuração dele
 continua certa, só falta o certificado. Biblioteca e metadados não são
 afetados: ficam no banco local. Trocar o ingress para `http://` "resolve" o
 sintoma e esconde a causa real (o token revogado) — evite fazer isso.
