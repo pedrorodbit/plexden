@@ -64,9 +64,12 @@ ensure_curl
 
 echo "== Baixando plexden + provision.sh de ${RAW} =="
 mkdir -p "${PLEXDEN_HOME}/scripts"
-curl -fsSL "${RAW}/plexden"                -o "${PLEXDEN_HOME}/scripts/plexden"
-curl -fsSL "${RAW}/provision.sh"           -o "${PLEXDEN_HOME}/provision.sh"
-curl -fsSL "${RAW}/credentials.env.example" -o "${PLEXDEN_HOME}/credentials.env.example"
+# --max-time e obrigatorio aqui: sem limite, uma rede lenta ou um proxy que
+# engole a conexao travam a instalacao logo no primeiro download, antes de
+# qualquer coisa aparecer na tela.
+curl -fsSL --max-time 60 "${RAW}/plexden"                -o "${PLEXDEN_HOME}/scripts/plexden"
+curl -fsSL --max-time 60 "${RAW}/provision.sh"           -o "${PLEXDEN_HOME}/provision.sh"
+curl -fsSL --max-time 60 "${RAW}/credentials.env.example" -o "${PLEXDEN_HOME}/credentials.env.example"
 chmod +x "${PLEXDEN_HOME}/scripts/plexden" "${PLEXDEN_HOME}/provision.sh"
 
 echo "== Provisionando (HOME=${PLEXDEN_HOME}, usuario=${PLEXDEN_USER}) =="

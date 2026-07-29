@@ -64,6 +64,31 @@ read_tty_secreto() {   # $1 = prompt; nao ecoa o que foi digitado
     return 1
 }
 
+# Roda um comando em segundo plano e avisa a cada poucos segundos que ainda
+# esta vivo — sem isso, uma instalacao de pacotes ou download lento nao
+# imprime nada por dezenas de segundos e parece travado, mesmo funcionando.
+# O 'fail()' de dentro do comando ainda funciona: 'exit' num job em segundo
+# plano so encerra o job, e o codigo de saida chega aqui pelo 'wait'.
+com_status() {   # $1 = rotulo, resto = comando
+    local rotulo="$1" pid t=0 rc
+    shift
+    "$@" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 5
+        kill -0 "$pid" 2>/dev/null || break
+        t=$((t + 5))
+        log "  ...$rotulo, ainda em andamento (${t}s)"
+    done
+    if wait "$pid"; then rc=0; else rc=$?; fi
+    if [ "$rc" = 0 ]; then
+        log "  ...$rotulo, concluido"
+    else
+        log "  ...$rotulo, falhou (codigo $rc)"
+    fi
+    return "$rc"
+}
+
 if [ "$CHECK" = 0 ]; then
     [ "$(id -u)" -eq 0 ] || fail "rode como root (sudo $0)"
     # cria o usuario da stack se ainda nao existir
@@ -295,10 +320,14 @@ PY
     exit 0
 fi
 
-pkg_refresh
-for p in $base; do
-    install_if_missing "$p"
-done
+_instalar_pacotes_base() {
+    pkg_refresh
+    for p in $base; do
+        install_if_missing "$p"
+    done
+}
+com_status "instalando pacotes base" _instalar_pacotes_base \
+  || fail "instalacao dos pacotes base falhou — veja o log acima"
 
 # Sem estes, a stack falha de um jeito silencioso e dificil de diagnosticar: os
 # servicos sobem com 'su' e a saude e' medida com HTTP. Melhor parar aqui.
@@ -341,7 +370,7 @@ install_plex() {
     case "$PKG" in
         apt-get)
             mkdir -p /etc/apt/keyrings
-            curl -fsSL https://downloads.plex.tv/plex-keys/PlexSign.key \
+            curl -fsSL --max-time 60 https://downloads.plex.tv/plex-keys/PlexSign.key \
               | gpg --dearmor -o /etc/apt/keyrings/plex.gpg
             echo "deb [signed-by=/etc/apt/keyrings/plex.gpg] https://downloads.plex.tv/repo/deb public main" \
               > /etc/apt/sources.list.d/plexmediaserver.list
@@ -363,7 +392,8 @@ install_plex() {
             ;;
         dnf|yum)
             repodir=/etc/yum.repos.d
-            if rpm --import https://downloads.plex.tv/plex-keys/PlexSign.key 2>/dev/null; then
+            if curl -fsSL --max-time 60 -o /tmp/plex.key https://downloads.plex.tv/plex-keys/PlexSign.key \
+               && rpm --import /tmp/plex.key 2>/dev/null; then
                 mkdir -p "$repodir"
                 cat > "$repodir/plex.repo" <<'REPO'
 [PlexRepo]
@@ -376,6 +406,7 @@ REPO
             else
                 log "  chave do Plex recusada pelo rpm — pulando o repositorio"
             fi
+            rm -f /tmp/plex.key
             if pkg_install "$PLEX_PKG"; then
                 log "  instalado pelo repositorio do Plex"
             else
@@ -392,7 +423,7 @@ REPO
             ;;
     esac
 }
-install_plex
+com_status "instalando o Plex" install_plex || fail "instalacao do Plex falhou — veja o log acima"
 
 # ------------------------------------------------------------- cloudflared ---
 # Binario estatico oficial: portavel em qualquer distro (dispensa .deb/.rpm).
@@ -408,11 +439,12 @@ install_cloudflared() {
         armv7l|armhf)  cfarch=arm ;;
         *) fail "arquitetura sem binario cloudflared: $(uname -m)" ;;
     esac
-    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfarch}" \
+    curl -fsSL --max-time 300 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfarch}" \
       -o /usr/local/bin/cloudflared || fail "download do cloudflared falhou"
     chmod +x /usr/local/bin/cloudflared
 }
-install_cloudflared
+com_status "instalando o cloudflared" install_cloudflared \
+  || fail "instalacao do cloudflared falhou — veja o log acima"
 
 # Se o UUID nao veio por env, auto-detecta pelo unico *.json ja restaurado em
 # cloudflared/ (reinstalacao). Cedo o bastante para o assistente interativo
@@ -430,9 +462,13 @@ fi
 setup_cloudflare_tunnel() {
     local certdir="${HOME:-/root}/.cloudflared" nome uuid host_plex host_qbit saida
 
-    echo "  abra o link a seguir num navegador e autorize:" >/dev/tty
-    if ! cloudflared tunnel login </dev/tty >/dev/tty 2>&1; then
-        log "  login nao concluido — Cloudflare Tunnel pulado"
+    echo "  abra o link a seguir num navegador e autorize (ate 5min de espera):" >/dev/tty
+    # 'timeout' e obrigatorio aqui: sem ele, um navegador que nunca autoriza,
+    # rede que bloqueia o callback do OAuth, ou a pessoa que so foi embora,
+    # travariam a instalacao inteira para sempre, sem chance de seguir.
+    if ! timeout 300 cloudflared tunnel login </dev/tty >/dev/tty 2>&1; then
+        log "  login nao concluido em 5min (ou cancelado) — Cloudflare Tunnel pulado"
+        log "  rode de novo o provision.sh quando quiser tentar de novo"
         return 0
     fi
     if [ ! -f "$certdir/cert.pem" ]; then
@@ -442,7 +478,7 @@ setup_cloudflare_tunnel() {
 
     nome=$(read_tty "  nome do tunnel [plexden]: ") || nome=""
     nome="${nome:-plexden}"
-    saida=$(cloudflared tunnel create "$nome" </dev/tty 2>&1)
+    saida=$(timeout 60 cloudflared tunnel create "$nome" </dev/tty 2>&1)
     printf '%s\n' "$saida" >/dev/tty
     # Ancorado em "with id <UUID>", a frase que o cloudflared sempre imprime
     # ao criar um tunnel — pegar qualquer UUID solto na saida arriscaria casar
@@ -478,8 +514,8 @@ setup_cloudflare_tunnel() {
         echo "  - service: http_status:404"
     } > "$PERSIST/cloudflared/config.yml"
 
-    [ -n "$host_plex" ] && cloudflared tunnel route dns "$nome" "$host_plex" </dev/tty >/dev/tty 2>&1
-    [ -n "$host_qbit" ] && cloudflared tunnel route dns "$nome" "$host_qbit" </dev/tty >/dev/tty 2>&1
+    [ -n "$host_plex" ] && timeout 60 cloudflared tunnel route dns "$nome" "$host_plex" </dev/tty >/dev/tty 2>&1
+    [ -n "$host_qbit" ] && timeout 60 cloudflared tunnel route dns "$nome" "$host_qbit" </dev/tty >/dev/tty 2>&1
 
     TUNNEL_UUID="$uuid"
     log "  tunnel '$nome' configurado (UUID $uuid)"
@@ -501,6 +537,12 @@ log "  ok"
 # provisionamento segue com os avisos de sempre, exatamente como antes deste
 # assistente existir.
 log "== Assistente interativo =="
+if : 2>/dev/null </dev/tty; then
+    log "  terminal interativo detectado — vou perguntar o que ainda faltar"
+else
+    log "  sem terminal interativo (automacao, CI, ou stdin sem controle de tty)"
+    log "  — pulando as perguntas abaixo; configure depois pelo README"
+fi
 
 if [ -f "$PERSIST/credentials.env" ]; then
     log "  qBittorrent: credentials.env ja existe, pulando pergunta"
