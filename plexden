@@ -395,6 +395,10 @@ def do_stop():
     return 0
 
 
+def _tag(ok, ruim="PARADO"):
+    return f"[{'OK' if ok else ruim:<6}]"
+
+
 def do_status():
     print("== Status ==")
     if plex_ok():
@@ -402,16 +406,16 @@ def do_status():
         vers = re.findall(r'version="([^"]*)"', ident)
         v = vers[-1] if vers else "?"
         cm = re.search(r'claimed="([01])"', ident)
-        print(f"  Plex         OK      v{v}  claimed={cm.group(1) if cm else '?'}")
+        print(f"  {_tag(True)} Plex         v{v}  claimed={cm.group(1) if cm else '?'}")
     else:
-        print("  Plex         PARADO")
-    print("  qBittorrent  OK" if qbit_ok() else "  qBittorrent  PARADO")
+        print(f"  {_tag(False)} Plex")
+    print(f"  {_tag(qbit_ok())} qBittorrent")
     if cf_ok():
-        print("  cloudflared  OK")
+        print(f"  {_tag(True)} cloudflared")
     elif cf_configured():
-        print("  cloudflared  PARADO")
+        print(f"  {_tag(False)} cloudflared")
     else:
-        print("  cloudflared  nao configurado (opcional)")
+        print("  [--    ] cloudflared  (opcional, nao configurado)")
     print("\n  Volume persistente:")
     try:
         st = os.statvfs(PERSIST)
@@ -1563,7 +1567,9 @@ def cmd_doctor(args):
     ]
     print("== plexden doctor ==\n")
     for nivel, msg in checks:
-        print(f"[{nivel:<5}] {msg}")
+        # Mesma largura de tag do 'services status' ([OK]/[PARADO]/[FALHOU]):
+        # um so padrao visual em toda a ferramenta.
+        print(f"[{nivel:<6}] {msg}")
 
     erros = sum(1 for n, _ in checks if n == "ERRO")
     avisos = sum(1 for n, _ in checks if n == "AVISO")

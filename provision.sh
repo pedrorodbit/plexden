@@ -846,11 +846,15 @@ echo
 log "== Verificacao =="
 FALHOU=""
 PLEX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null)
-echo "  Plex        HTTP ${PLEX_CODE:-sem resposta}"
-[ "$PLEX_CODE" = 200 ] || FALHOU="$FALHOU Plex"
+if [ "$PLEX_CODE" = 200 ]; then
+    echo "  [OK    ] Plex         HTTP $PLEX_CODE"
+else
+    echo "  [FALHOU] Plex         HTTP ${PLEX_CODE:-sem resposta}"
+    FALHOU="$FALHOU Plex"
+fi
 CLAIMED=$(curl -s --max-time 10 http://127.0.0.1:32400/identity 2>/dev/null \
           | grep -o 'claimed="[01]"')
-echo "  ${CLAIMED:-claim desconhecido}"
+echo "            ${CLAIMED:-claim desconhecido}"
 
 # Reivindicar so faz sentido numa config nova, com o Plex de pe e ainda nao
 # reivindicado, e so pergunta com terminal — o token expira em 4 minutos, entao
@@ -879,15 +883,19 @@ if [ "$PLEX_NOVO" = 1 ] && [ "$PLEX_CODE" = 200 ] && [ "$CLAIMED" = 'claimed="0"
 fi
 
 QB_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:8081/ 2>/dev/null)
-echo "  qBittorrent HTTP ${QB_CODE:-sem resposta}"
-[ "$QB_CODE" = 200 ] || FALHOU="$FALHOU qBittorrent"
+if [ "$QB_CODE" = 200 ]; then
+    echo "  [OK    ] qBittorrent  HTTP $QB_CODE"
+else
+    echo "  [FALHOU] qBittorrent  HTTP ${QB_CODE:-sem resposta}"
+    FALHOU="$FALHOU qBittorrent"
+fi
 # Tunnel e opcional: dizer "PARADO" para quem nunca o configurou e alarme falso.
 if pgrep -x cloudflared >/dev/null 2>&1; then
-    echo "  cloudflared rodando"
+    echo "  [OK    ] cloudflared  rodando"
 elif [ -f /etc/cloudflared/cert.pem ]; then
-    echo "  cloudflared PARADO"
+    echo "  [FALHOU] cloudflared  parado"
 else
-    echo "  cloudflared nao configurado (opcional)"
+    echo "  [--    ] cloudflared  nao configurado (opcional)"
 fi
 
 echo
