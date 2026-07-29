@@ -282,6 +282,8 @@ plexden postprocess "<nome>" "<caminho>"     # o AutoRun do qBittorrent chama is
 plexden links [--apply]                      # download apagado? tira o link da biblioteca
 plexden links --scan [--apply]               # redescobre pares por inode (nunca remove)
 sudo plexden update                          # atualiza o Plex pelo pacote oficial (.deb/.rpm)
+sudo plexden uninstall [--purge] [--yes]     # desinstala a stack (--purge apaga a mídia também)
+plexden doctor                                # diagnóstico rápido, só leitura
 ```
 
 O que cada comando faz:
@@ -370,6 +372,23 @@ O que cada comando faz:
   respeita o canal da sua conta. Se a instalação do pacote falhar, ele sai
   com erro apontando o backup — em vez de deixar você com o Plex parado e um
   "Pronto" na tela.
+- **`uninstall`** — para os serviços, desinstala Plex/qBittorrent/cloudflared
+  e limpa tudo que o `provision.sh` criou no sistema (stubs, `/etc/plexden.conf`
+  etc.). Se houver um Cloudflare Tunnel configurado, ele também é **revogado
+  de verdade na Cloudflare** (`cloudflared tunnel delete`), não só apagado
+  localmente — o registro DNS que aponta pra ele, porém, não some sozinho;
+  isso precisa ser removido à mão pelo painel da Cloudflare. Por padrão
+  `$PLEXDEN_HOME` (mídia, banco do Plex, torrents) **fica intacto**; use
+  `--purge` se quiser apagar isso também — que pede uma segunda confirmação
+  específica (digitar `APAGAR`), inclusive quando `--yes` já foi passado, já
+  que essa parte não tem volta. Sem terminal interativo, `--purge` se recusa
+  a rodar; a desinstalação normal aceita `--yes` para automação.
+- **`doctor`** — só leitura, dispensa root: roda uma bateria de checagens
+  (usuário da stack, `/etc/plexden.conf`, pacotes do Plex/qBittorrent
+  instalados, os três serviços respondendo, `credentials.env`, espaço em
+  disco) e resume tudo como `[OK]`, `[AVISO]` ou `[ERRO]`. Não muda nada no
+  sistema — é o primeiro comando pra rodar quando algo parece errado, antes
+  de ir atrás de log.
 
 ## Problemas comuns
 

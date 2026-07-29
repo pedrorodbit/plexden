@@ -14,6 +14,8 @@ pacote via pip).
   plexden postprocess "<nome>" "<caminho>"                    (AutoRun do qB)
   plexden links [--scan] [--apply]                            (limpa a biblioteca)
   plexden update                                              (root)
+  plexden uninstall [--purge] [--yes]                         (root)
+  plexden doctor                                              (dispensa root)
   plexden plex-exec                                           (entrypoint do Plex)
   plexden _init {start|stop|status|restart}                  (stub SysV)
 
@@ -1260,6 +1262,297 @@ def cmd_update(args):
     return 0
 
 
+# ============================================================ UNINSTALL =======
+CF_ETC = "/etc/cloudflared"
+CF_BIN = "/usr/local/bin/cloudflared"
+STACK_STUB = "/usr/local/bin/plex-stack-start"
+
+
+def _du_sh(path):
+    r = sh(["du", "-sh", path])
+    return r.stdout.split()[0] if r.returncode == 0 and r.stdout else "?"
+
+
+def _confirmar(pergunta):
+    """False sem terminal interativo — nunca trava esperando um input que
+    nao vai chegar (ex.: rodado de um script sem --yes por engano)."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        resposta = input(pergunta)
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return resposta.strip().lower() in ("s", "sim", "y", "yes")
+
+
+def _cf_tunnel_uuid():
+    """UUID e cert.pem do tunnel configurado, procurando primeiro no volume
+    persistente (fonte da verdade) e so depois em /etc (pode ter sido
+    restaurado so ali numa instalacao antiga)."""
+    for base in (os.path.join(PERSIST, "cloudflared"), CF_ETC):
+        cert = os.path.join(base, "cert.pem")
+        if not os.path.isfile(cert):
+            continue
+        try:
+            nomes = os.listdir(base)
+        except OSError:
+            continue
+        for nome in nomes:
+            if nome.endswith(".json"):
+                return nome[:-5], cert
+    return None, None
+
+
+def _uninstall_tunnel():
+    uuid, cert = _cf_tunnel_uuid()
+    if not uuid:
+        print("  sem credenciais de tunnel — nada a revogar")
+        return
+    if not shutil.which("cloudflared"):
+        print("  cloudflared nao esta mais instalado — pulei a revogacao do tunnel")
+        return
+    print(f"  revogando o tunnel {uuid} na Cloudflare...")
+    # --origincert explicito: nao da pra confiar que ~/.cloudflared/cert.pem
+    # (onde o 'tunnel login' original deixou o certificado) ainda exista —
+    # o cert que sobrevive de verdade e o copiado para o volume persistente.
+    base = ["timeout", "60", "cloudflared", "tunnel", "--origincert", cert]
+    sh(base + ["cleanup", uuid])
+    r = sh(base + ["delete", uuid])
+    if r.returncode == 0:
+        print("  tunnel revogado na Cloudflare")
+    else:
+        detalhe = (r.stderr or r.stdout or "").strip()
+        print(f"  AVISO: nao consegui revogar o tunnel automaticamente ({detalhe})")
+        print(f"  revogue na mao depois: cloudflared tunnel --origincert {cert} delete {uuid}")
+    print("  lembrete: se algum dominio foi apontado pro tunnel (route dns), o")
+    print("  registro DNS continua la — remova pelo painel da Cloudflare.")
+
+
+def _uninstall_pacotes():
+    mgr = _detect_pkg()
+    if not mgr:
+        print("  gerenciador de pacotes nao reconhecido — remova")
+        print("  plexmediaserver e qbittorrent-nox manualmente")
+        return
+    pkgs = ["plexmediaserver", "qbittorrent-nox"]
+    if mgr == "apt-get":
+        sh(["apt-get", "remove", "-y", "-qq"] + pkgs)
+        _rm("/etc/apt/sources.list.d/plexmediaserver.list")
+        _rm("/etc/apt/keyrings/plex.gpg")
+    else:
+        sh([mgr, "remove", "-y", "-q"] + pkgs)
+        _rm("/etc/yum.repos.d/plex.repo")
+    print("  pacotes removidos (config e midia continuam intactos)")
+
+
+def _uninstall_arquivos():
+    # 'service uninstall' remove a unit do systemd ou o script SysV — o que
+    # o 'service install' do provision.sh tiver criado — sem a gente ter que
+    # adivinhar qual dos dois caminhos foi usado.
+    if shutil.which("cloudflared"):
+        sh(["cloudflared", "service", "uninstall"])
+    _rm(CF_BIN)
+    shutil.rmtree(CF_ETC, ignore_errors=True)
+    _rm(INIT_PLEX)
+    _rm(STACK_STUB)
+    _rm("/etc/plexden.conf")
+    try:
+        import pwd
+        home = pwd.getpwnam(PLEX_USER).pw_dir
+        _rm(os.path.join(home, "bin", "plex-start"))
+    except (KeyError, OSError):
+        pass
+    print("  stubs, binarios e config do sistema removidos")
+
+
+def cmd_uninstall(args):
+    require_root("uninstall")
+    purge = "--purge" in args
+    pula_confirmacao = "--yes" in args or "-y" in args
+
+    print("== O que sera removido ==")
+    print("  Servicos, os pacotes Plex/qBittorrent, o cloudflared, o tunnel na")
+    print("  Cloudflare (se houver) e os arquivos que o provision.sh criou.")
+    if purge:
+        tam = _du_sh(PERSIST) if os.path.isdir(PERSIST) else "?"
+        print(f"\n  --purge: TAMBEM apaga {PERSIST} inteiro — midia, banco do Plex,")
+        print(f"  torrents ({tam}). ISSO NAO TEM VOLTA.")
+
+    if not pula_confirmacao and not _confirmar("\nContinuar? [s/N] "):
+        print("cancelado")
+        return 1
+
+    if purge:
+        # O purge apaga dado do usuario, entao confirma sempre de novo, com
+        # uma resposta que nao sai sem querer de um '--yes' apertado na pressa
+        # — nem sequer o '--yes' da base dispensa esta segunda confirmacao.
+        tam = _du_sh(PERSIST) if os.path.isdir(PERSIST) else "?"
+        if not sys.stdin.isatty():
+            print("ERRO: --purge exige confirmacao num terminal interativo")
+            return 1
+        try:
+            resp = input(f"\nDigite APAGAR para apagar {PERSIST} ({tam}) de vez: ")
+        except (EOFError, KeyboardInterrupt):
+            resp = ""
+        if resp.strip() != "APAGAR":
+            print("purge cancelado (o resto da desinstalacao continua)")
+            purge = False
+
+    do_stop()
+
+    print("\n== Cloudflare Tunnel ==")
+    _uninstall_tunnel()
+
+    print("\n== Pacotes ==")
+    _uninstall_pacotes()
+
+    print("\n== Arquivos e stubs ==")
+    _uninstall_arquivos()
+
+    if purge:
+        print("\n== Purge ==")
+        if os.path.isdir(PERSIST):
+            shutil.rmtree(PERSIST, ignore_errors=True)
+            print(f"  {PERSIST} removido")
+        try:
+            import pwd
+            pwd.getpwnam(PLEX_USER)
+            print(f"  usuario '{PLEX_USER}' NAO foi removido automaticamente")
+            print(f"  (se quiser: userdel -r {PLEX_USER})")
+        except KeyError:
+            pass
+    else:
+        print(f"\n  {PERSIST} preservado — midia e banco do Plex intactos")
+
+    print("\n== Pronto ==")
+    _rm(os.path.abspath(sys.argv[0]))
+    return 0
+
+
+# ============================================================ DOCTOR ==========
+# Diagnostico somente-leitura: nao muda nada no sistema, so relata. Dispensa
+# root pelo mesmo motivo que 'services status' dispensa — cada checagem aqui
+# ja e leitura (HTTP, statvfs, dpkg/rpm -q, pwd).
+def _doc(nivel, msg):
+    return (nivel, msg)
+
+
+def _check_usuario():
+    try:
+        import pwd
+        pwd.getpwnam(PLEX_USER)
+        return _doc("OK", f"usuario da stack '{PLEX_USER}' existe")
+    except KeyError:
+        return _doc("ERRO", f"usuario '{PLEX_USER}' nao existe")
+
+
+def _check_conf():
+    if os.path.isfile("/etc/plexden.conf"):
+        return _doc("OK", "/etc/plexden.conf presente")
+    return _doc("AVISO", "/etc/plexden.conf ausente — rode o provision.sh")
+
+
+def _check_pacote_plex():
+    mgr = _detect_pkg()
+    fam = _pkg_family(mgr) if mgr else None
+    if not fam:
+        return _doc("AVISO", "gerenciador de pacotes nao reconhecido — nao da pra checar o pacote do Plex")
+    ver = _plex_version_installed(fam)
+    if ver:
+        return _doc("OK", f"pacote do Plex instalado (v{ver})")
+    return _doc("ERRO", "pacote do Plex (plexmediaserver) nao instalado")
+
+
+def _check_pacote_qbit():
+    if shutil.which("qbittorrent-nox"):
+        return _doc("OK", "qbittorrent-nox instalado")
+    return _doc("ERRO", "qbittorrent-nox nao encontrado")
+
+
+def _check_plex():
+    if plex_ok():
+        ident = http_get(f"{PLEX_URL}/identity", timeout=5)
+        cm = re.search(r'claimed="([01])"', ident)
+        claimed = cm.group(1) if cm else "?"
+        if claimed == "0":
+            return _doc("AVISO", "Plex no ar, mas nao reivindicado (veja plex.tv/claim)")
+        return _doc("OK", f"Plex respondendo (claimed={claimed})")
+    if _plex_running_pid():
+        return _doc("ERRO", "Plex: processo vivo mas HTTP nao responde (travado)")
+    return _doc("AVISO", "Plex parado")
+
+
+def _check_qbit():
+    if qbit_ok():
+        return _doc("OK", "qBittorrent respondendo")
+    if pgrep_x("qbittorrent-nox"):
+        return _doc("ERRO", "qBittorrent: processo vivo mas HTTP nao responde")
+    return _doc("AVISO", "qBittorrent parado")
+
+
+def _check_cloudflared():
+    if not cf_configured():
+        return _doc("OK", "cloudflared nao configurado (opcional)")
+    if cf_ok():
+        return _doc("OK", "cloudflared rodando")
+    return _doc("AVISO", "cloudflared configurado mas parado")
+
+
+def _check_credenciais_qb():
+    caminho = os.path.join(PERSIST, "credentials.env")
+    if os.path.isfile(caminho):
+        return _doc("OK", "credentials.env presente")
+    return _doc("AVISO", "credentials.env ausente — 'plexden qb' vai pedir ~/.qbcreds")
+
+
+def _check_disco():
+    try:
+        st = os.statvfs(PERSIST)
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        if not total:
+            return _doc("AVISO", f"{PERSIST}: nao foi possivel medir o espaco")
+        pct_livre = free * 100 / total
+        gb = lambda b: f"{b / (1024**3):.0f}G"
+        msg = f"{PERSIST}: {gb(free)} livres de {gb(total)} ({pct_livre:.0f}% livre)"
+        if pct_livre < 5:
+            return _doc("ERRO", msg + " — espaco critico")
+        if pct_livre < 15:
+            return _doc("AVISO", msg + " — espaco baixo")
+        return _doc("OK", msg)
+    except OSError:
+        return _doc("ERRO", f"{PERSIST} inacessivel — rode o provision.sh")
+
+
+def cmd_doctor(args):
+    checks = [
+        _check_usuario(),
+        _check_conf(),
+        _check_pacote_plex(),
+        _check_pacote_qbit(),
+        _check_plex(),
+        _check_qbit(),
+        _check_cloudflared(),
+        _check_credenciais_qb(),
+        _check_disco(),
+    ]
+    print("== plexden doctor ==\n")
+    for nivel, msg in checks:
+        print(f"[{nivel:<5}] {msg}")
+
+    erros = sum(1 for n, _ in checks if n == "ERRO")
+    avisos = sum(1 for n, _ in checks if n == "AVISO")
+    print()
+    if erros:
+        print(f"{erros} erro(s), {avisos} aviso(s) — veja acima")
+        return 1
+    if avisos:
+        print(f"tudo certo, {avisos} aviso(s) — veja acima")
+        return 0
+    print("tudo certo")
+    return 0
+
+
 # ============================================================ DISPATCH ========
 USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
 
@@ -1270,6 +1563,8 @@ USAGE = """plexden — stack Plex + qBittorrent + Cloudflare
   plexden links [--apply]      fonte do torrent apagada -> remove o hardlink
   plexden links --scan [--apply]   redescobre pares por inode (nunca remove)
   plexden update                                              (root)
+  plexden uninstall [--purge] [--yes]                         (root)
+  plexden doctor                                              (dispensa root)
   plexden plex-exec
   plexden _init {start|stop|restart|status}
 """
@@ -1286,6 +1581,8 @@ def main(argv):
         "postprocess": cmd_postprocess,
         "links": cmd_links,
         "update": cmd_update,
+        "uninstall": cmd_uninstall,
+        "doctor": cmd_doctor,
         "plex-exec": cmd_plex_exec,
         "_init": cmd_init,
     }
